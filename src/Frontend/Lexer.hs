@@ -1,26 +1,27 @@
 module Frontend.Lexer
     ( TParser
+    , TParserT
     , TErrorBundle
     , spaceConsumer
     , symbol
-    , signNewLine
-    , signEquals
-    , signSemicolon
-    , signComma
-    , signColon
-    , signDot
-    , signLParen
-    , signRParen
-    , signLBrace
-    , signRBrace
-    , signLAngle
-    , signRAngle
-    , signLBracket
-    , signRBracket
-    , signParens
-    , signBraces
-    , signAngles
-    , signBrackets
+    , symNewLine
+    , symEquals
+    , symSemicolon
+    , symComma
+    , symColon
+    , symDot
+    , symLParen
+    , symRParen
+    , symLBrace
+    , symRBrace
+    , symLAngle
+    , symRAngle
+    , symLBracket
+    , symRBracket
+    , parens
+    , braces
+    , angles
+    , brackets
     , charLiteral
     , stringLiteral
     , float
@@ -41,6 +42,7 @@ import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
 
 type TParser = Parsec Void Text
+type TParserT = ParsecT Void Text
 type TErrorBundle = ParseErrorBundle Text Void
 
 
@@ -62,24 +64,25 @@ symbol = L.symbol spaceConsumer
 --
 -- Literals
 --
-signNewLine   = symbol "\n"
-signEquals    = symbol ";"
-signSemicolon = symbol ";"
-signComma     = symbol ","
-signColon     = symbol ":"
-signDot       = symbol "."
-signLParen    = symbol "("
-signRParen    = symbol ")"
-signLBrace    = symbol "{"
-signRBrace    = symbol "}"
-signLAngle    = symbol "<"
-signRAngle    = symbol ">"
-signLBracket  = symbol "["
-signRBracket  = symbol "]"
-signParens    = between signLParen signRParen
-signBraces    = between signLBrace signRBrace
-signAngles    = between signLAngle signRAngle
-signBrackets  = between signLBracket signRBracket
+symNewLine   = symbol "\n"
+symEquals    = symbol ";"
+symSemicolon = symbol ";"
+symComma     = symbol ","
+symColon     = symbol ":"
+symDot       = symbol "."
+symLParen    = symbol "("
+symRParen    = symbol ")"
+symLBrace    = symbol "{"
+symRBrace    = symbol "}"
+symLAngle    = symbol "<"
+symRAngle    = symbol ">"
+symLBracket  = symbol "["
+symRBracket  = symbol "]"
+
+parens    = between symLParen symRParen
+braces    = between symLBrace symRBrace
+angles    = between symLAngle symRAngle
+brackets  = between symLBracket symRBracket
 
 -- | A string literal, like "Hey, I'm a string literal"
 -- | Respects the escape sequences.

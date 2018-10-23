@@ -2,13 +2,14 @@ module Frontend.AST where
 
 import TechnePrelude
 
--- Some newtype's for clarification
-newtype Name = Name Text deriving (Eq, Show)
-newtype ConceptName = ConceptName Text deriving (Eq, Show)
-newtype DataName = DataName Text deriving (Eq, Show)
+-- Some type's for clarification
+type Name = Text
+type Path = Text
+type ConceptName = Text
+type DataName = Text
 
 
-data Import = Import [Text] Text -- from Some.Module use Something
+data Import = Import [Path] Name -- from Some.Module use Something
     deriving (Eq, Show)
 
 data Module = Module [Import] [Assign] deriving (Eq, Show)
@@ -51,10 +52,9 @@ data Assign
     deriving (Eq, Show)
 
 data Expr
-    = IfExpr     Expr Expr Expr               -- if EXPR then EXPR else EXPR
-    | WhenExpr   (Maybe Expr) [(Expr, Expr)]  -- when [EXPR is] (EXPR -> EXPR)...
-    | FnApplExpr Name [Expr]                  -- fn(arg1,arg2...)
+    = IfExpr     (Expr, Expr) [(Expr, Expr)] Expr -- if EXPR then EXPR (elif EXPR then EXPR)... else EXPR
+    | WhenExpr   (Maybe Expr) [(Expr, Expr)]      -- when [EXPR is] (EXPR -> EXPR)...
+    | FnApplExpr Name [(Name,Expr)]                      -- fn(pName=arg1,pName2=arg2...)
     | LitExpr    Lit
     -- TODO: | PartialAppExpr
     deriving (Eq, Show)
-

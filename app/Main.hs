@@ -3,6 +3,12 @@
 module Main where
 
 import TechnePrelude
+import Frontend.AST
+import Frontend.Lexer (TParserT, TParser)
+import Frontend.Parser
+
+import Text.Megaparsec
+import Text.Megaparsec.Error
 
 import Options.Applicative
 import Data.Semigroup ((<>))
@@ -13,22 +19,31 @@ import System.Console.Haskeline
 --
 data Options = Options
   { interactive :: Bool
-  , output :: Text }
+  , output :: Text
+  , input :: Maybe Text }
 
+optInteractive :: Parser Bool
 optInteractive = switch $
     long "interactive"
     <> short 'i'
     <> help "Start an interactive Techne shell."
 
+optOutput :: Parser Text
 optOutput = strOption $
     long "output"
+    <> short 'o'
+    <> value ""
     <> metavar "<file>"
     <> help "Place the output into <file>"
+
+optInput :: Parser (Maybe Text)
+optInput = optional $ argument str (metavar "<file>")
 
 options :: Parser Options
 options = Options
     <$> optInteractive
     <*> optOutput
+    <*> optInput
 
 --
 -- Main
@@ -39,13 +54,13 @@ main :: IO ()
 main = runOptions =<< execParser opts
   where
     opts = info (options <**> helper)
-      ( fullDesc
+      (fullDesc
      <> progDesc "Compile files or run an interactive shell."
-     <> header "Techne" )
+     <> header "Techne")
 
 -- | Do stuff depending on commandline options.
 runOptions :: Options -> IO ()
-runOptions (Options True _) = runInputT defaultSettings repl
+runOptions (Options True _ _) = runInputT defaultSettings repl
 runOptions _ = return ()
 
 
@@ -53,7 +68,9 @@ repl :: InputT IO ()
 repl = getInputLine "> " >>= \case
     Nothing    -> repl
     Just ":q"  -> return ()
-    Just input -> do { outputStrLn $ "Input was: " ++ input; repl }
-
-
-
+    Just input -> do
+        case pp input of
+          Right x -> outputStrLn (show x)
+          Left y -> outputStrLn $ errorBundlePretty y
+        repl
+    where pp str = parse (parseExpr) "" (pack str)
