@@ -1,7 +1,8 @@
 module Frontend.Parser
-    ( parseModule
-    , parseExpr
-    , parseAssign
+    ( module_
+    , expr
+    , assign
+    , repl
     ) where
 
 import TechnePrelude
@@ -11,88 +12,130 @@ import Frontend.AST
 import Text.Megaparsec
 import Text.Megaparsec.Char
 
-parseModule :: TParser Module
-parseModule = do
-    imports <- many parseImport
-    assigns <- many parseAssign
+-- FIXME: delet this
+repl :: TParser Text
+repl = fmap tshow import_ <|> fmap tshow expr <|> fmap tshow fnDef -- <|> fmap tshow assign
+
+module_ :: TParser Module
+module_ = do
+    imports <- many import_
+    assigns <- many assign
     return $ Module imports assigns
 
-parseImport :: TParser Import
-parseImport = do
+import_ :: TParser Import
+import_ = do
     symbol "from"
     path <- identifier `sepBy1` char '.'
     symbol "use"
     endpoint <- identifier
-    symSemicolon
+    semicolon
     return $ Import path endpoint
 
 -- TODO: parse params and pass them to subparsers
-parseAssign :: TParser Assign
-parseAssign = undefined
+assign :: TParser Assign
+assign = undefined
 
+expr :: TParser Expr
+expr = literal
+    <|> try when_
+    <|> if_
 
-parseExpr :: TParser Expr
-parseExpr = parseLitExpr
-    <|> parseWhen
-    <|> parseIf
-
-parseLitExpr :: TParser Expr
-parseLitExpr = LitExpr <$>
-    (Str <$> stringLiteral
-    <|> Chr <$> charLiteral
+literal :: TParser Expr
+literal = LitExpr <$>
+    (Str <$> stringLit
+    <|> Chr <$> charLit
     <|> Flt <$> try signedFloat
     <|> Int <$> signedInteger)
 
-parseWhen :: TParser Expr
-parseWhen = do
-    reservedWord "when"
-    predicate <- optional . try $ parseExpr <* reservedWord "is"
+when_ :: TParser Expr
+when_ = do
+    rword "when"
+    predicate <- optional . try $ expr <* rword "is"
     pairs <- flip sepBy1 (symbol ",") $ do
-        lhs <- parseExpr
+        lhs <- expr
         symbol "->"
-        rhs <- parseExpr
+        rhs <- expr
         return (lhs, rhs)
-    reservedWord "end"
+    rword "end"
     return $ WhenExpr predicate pairs
 
+
 -- FIXME: `then` looks ugly, find something else
-parseIf :: TParser Expr
-parseIf = do
-    reservedWord "if"
-    pred <- parseExpr
-    reservedWord "then"
-    true <- parseExpr
+if_ :: TParser Expr
+if_ = do
+    rword "if"
+    pred <- expr
+    rword "then"
+    true <- expr
     pairs <- many . try $ do
-        reservedWord "elif"
-        pred <- parseExpr
-        reservedWord "then"
-        true <- parseExpr
+        rword "elif"
+        pred <- expr
+        rword "then"
+        true <- expr
         return (pred, true)
-    reservedWord "else"
-    els <- parseExpr
-    return $ IfExpr (pred, true) pairs els
+    rword "else"
+    IfExpr (pred, true) pairs <$> expr
 
--- parseType :: Maybe Params -> TParser Type
-parseType = undefined
 
-parseDefinition :: TParser (Name, Type)
-parseDefinition = do
+params = many param `sepBy` char ','
+param = do
     ident <- identifier
-    symColon
-    typ <- parseType
+    colon
+    typ <- identifier
     return (ident, typ)
 
-parseData :: TParser Expr
-parseData = undefined
+-- type :: Maybe Params -> TParser Type
+type_ = undefined
 
-parseSumData :: TParser Expr
-parseSumData = undefined
+definition :: TParser (Name, Type)
+definition = do
+    ident <- identifier
+    colon
+    typ <- type_
+    return (ident, typ)
 
-parseProductData :: TParser Expr
-parseProductData = undefined
+dat :: TParser Expr
+dat = undefined
 
-parseFn :: TParser Expr
-parseFn = undefined
+sumData :: TParser Expr
+sumData = undefined
 
-parseTopLvlFn :: TParser Expr
-parseTopLvlFn = undefined
+productData :: TParser Expr
+productData = undefined
+
+updateFnDefs :: FnDef -> TParser ()
+updateFnDefs def = do
+    state <- get
+    put $ state {fnDefs = def : fnDefs state}
+
+
+-- | Parses top-level function definitions.
+-- | Also it updates the TState for every function definition.
+fnDef :: TParser FnDef
+fnDef = do
+    fnname <- identifier
+    colon
+    constraints <- try (flip sepBy1 (lexeme $ char ',') $ do {
+        cname <- identifier;
+        tname <- identifier;
+        return (tname, cname) }) <|> return []
+    unless (null constraints) $ void (symbol "=>")
+    types <- identifier `sepBy1` symbol "->"
+    eol <|> semicolon
+    let def = map (mkType constraints) types
+    updateFnDefs def
+    return def
+    where mkType constraints typ
+            | startsUpper typ = ConcreteType typ
+            | otherwise       = PolyType typ $ lookupAll typ constraints
+
+
+-- | Parses a top level function. (RHS of the assignment)
+topLvlFn :: TParser Expr
+topLvlFn = undefined
+
+
+-- | Parses a lambda function.
+fn :: TParser Expr
+fn = undefined
+

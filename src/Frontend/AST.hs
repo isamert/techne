@@ -7,6 +7,7 @@ type Name = Text
 type Path = Text
 type ConceptName = Text
 type DataName = Text
+type FnDef = [Type]
 
 
 data Import = Import [Path] Name -- from Some.Module use Something
@@ -16,7 +17,7 @@ data Module = Module [Import] [Assign] deriving (Eq, Show)
 
 data Type
     = ConcreteType Name
-    | PolyType Name (Maybe [ConceptName]) -- Show a => a
+    | PolyType Name [ConceptName] -- Show a => a => PolyType a (Just "Show")
     deriving (Eq, Show)
 
 -- TODO: Pattern

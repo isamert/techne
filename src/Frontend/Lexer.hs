@@ -1,50 +1,59 @@
 module Frontend.Lexer
-    ( TParser
-    , TParserT
-    , TErrorBundle
+    ( TParser(..)
+    , TErrorBundle(..)
+    , TState(..)
+    , initTState
+    -- Re-exports
+    , runStateT
+    , get
+    , put
+    -- Functions
+    , lexeme
     , spaceConsumer
     , symbol
-    , symNewLine
-    , symEquals
-    , symSemicolon
-    , symComma
-    , symColon
-    , symDot
-    , symLParen
-    , symRParen
-    , symLBrace
-    , symRBrace
-    , symLAngle
-    , symRAngle
-    , symLBracket
-    , symRBracket
+    , newLine
+    , equals
+    , semicolon
+    , comma
+    , colon
+    , dot
+    , lparen
+    , rparen
+    , lbrace
+    , rbrace
+    , langle
+    , rangle
+    , lbracket
+    , rbracket
     , parens
     , braces
     , angles
     , brackets
-    , charLiteral
-    , stringLiteral
+    , charLit
+    , stringLit
     , float
     , integer
     , signedFloat
     , signedInteger
-    , reservedWords
-    , reservedWord
+    , rwords
+    , rword
     , identifier
     ) where
 
 import TechnePrelude
+import Frontend.AST
 
 import Data.Void
-
 import Text.Megaparsec
 import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
+import Control.Monad.State.Lazy
 
-type TParser = Parsec Void Text
-type TParserT = ParsecT Void Text
+newtype TState = TState { fnDefs :: [FnDef] } deriving (Show, Eq)
+type TParser a = StateT TState (Parsec Void Text) a
 type TErrorBundle = ParseErrorBundle Text Void
 
+initTState = TState [[]]
 
 spaceConsumer :: TParser ()
 spaceConsumer = L.space space1 lineComment blockComment
@@ -64,35 +73,35 @@ symbol = L.symbol spaceConsumer
 --
 -- Literals
 --
-symNewLine   = symbol "\n"
-symEquals    = symbol ";"
-symSemicolon = symbol ";"
-symComma     = symbol ","
-symColon     = symbol ":"
-symDot       = symbol "."
-symLParen    = symbol "("
-symRParen    = symbol ")"
-symLBrace    = symbol "{"
-symRBrace    = symbol "}"
-symLAngle    = symbol "<"
-symRAngle    = symbol ">"
-symLBracket  = symbol "["
-symRBracket  = symbol "]"
+newLine   = symbol "\n"
+equals    = symbol ";"
+semicolon = symbol ";"
+comma     = symbol ","
+colon     = symbol ":"
+dot       = symbol "."
+lparen    = symbol "("
+rparen    = symbol ")"
+lbrace    = symbol "{"
+rbrace    = symbol "}"
+langle    = symbol "<"
+rangle    = symbol ">"
+lbracket  = symbol "["
+rbracket  = symbol "]"
 
-parens    = between symLParen symRParen
-braces    = between symLBrace symRBrace
-angles    = between symLAngle symRAngle
-brackets  = between symLBracket symRBracket
+parens    = between lparen rparen
+braces    = between lbrace rbrace
+angles    = between langle rangle
+brackets  = between lbracket rbracket
 
 -- | A string literal, like "Hey, I'm a string literal"
 -- | Respects the escape sequences.
-stringLiteral :: TParser Text
-stringLiteral = pack <$> (char '"' >> manyTill L.charLiteral (char '"')) -- FIXME: pack?
+stringLit :: TParser Text
+stringLit = lexeme $ pack <$> (char '"' >> manyTill L.charLiteral (char '"')) -- FIXME: pack?
 
 -- | A char literal, like 'a' or '\n'
 -- | Respects the escape sequences.
-charLiteral :: TParser Char
-charLiteral = char '\'' >> L.charLiteral <* char '\''
+charLit :: TParser Char
+charLit = char '\'' >> L.charLiteral <* char '\''
 
 float         = lexeme L.float
 integer       = lexeme L.decimal
@@ -101,19 +110,20 @@ signedInteger = L.signed spaceConsumer integer
 
 -- TODO: needs to be updated
 -- TODO: break those apart: wIf = "if", wThen = "then" ...
-reservedWords :: [Text]
-reservedWords = ["if", "then", "else", "elif", "skip", "return", "and", "is",
+rwords :: [Text]
+rwords = ["if", "then", "else", "elif", "skip", "return", "and", "is",
                  "or", "while", "when", "use", "from"]
 
 -- | Parses given reserved word.
--- | reservedWord "if"
-reservedWord :: Text -> TParser ()
-reservedWord w = (lexeme . try) (string w >> notFollowedBy alphaNumChar)
+-- | rword "if"
+rword :: Text -> TParser ()
+rword w = (lexeme . try) (string w >> notFollowedBy alphaNumChar)
 
 identifier :: TParser Text
 identifier = (lexeme . try) (ident >>= check)
-    where identifierChar = noneOf ("\n.;{}[]()<>=|/+\\\"& " :: String) <?> "an identifer char"
+    where identifierChar = noneOf ("\n.,;{}[]()<>=|/+\\\"& " :: String) <?> "an identifer char"
           ident = pack <$> some identifierChar -- FIXME: pack? Is there something like (some :: TParser Text)?
           check w
-            | w `elem` reservedWords = fail $ show w ++ " is a keyword and cannot be an identifier."
+            | w `elem` rwords = fail $ show w ++ " is a keyword and cannot be an identifier."
+            | "-" `tisPrefixOf` w = fail $ "Identifiers cannot start with \"-\": " ++ show w
             | otherwise = return w

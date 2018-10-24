@@ -26,6 +26,7 @@ dependencies:
 - megaparsec >= 7.0.1
 - haskeline >= 0.7.3
 - optparse-applicative >= 0.14.3.0
+- mtl >= 2.2.2
 
 default-extensions:
 - OverloadedStrings

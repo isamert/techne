@@ -4,8 +4,8 @@ module Main where
 
 import TechnePrelude
 import Frontend.AST
-import Frontend.Lexer (TParserT, TParser)
-import Frontend.Parser
+import Frontend.Lexer
+import qualified Frontend.Parser as P
 
 import Text.Megaparsec
 import Text.Megaparsec.Error
@@ -60,17 +60,15 @@ main = runOptions =<< execParser opts
 
 -- | Do stuff depending on commandline options.
 runOptions :: Options -> IO ()
-runOptions (Options True _ _) = runInputT defaultSettings repl
+runOptions (Options True _ _) = runInputT defaultSettings $ repl initTState
 runOptions _ = return ()
 
 
-repl :: InputT IO ()
-repl = getInputLine "> " >>= \case
-    Nothing    -> repl
+repl :: TState -> InputT IO ()
+repl state = getInputLine "> " >>= \case
+    Nothing    -> repl state
     Just ":q"  -> return ()
-    Just input -> do
-        case pp input of
-          Right x -> outputStrLn (show x)
-          Left y -> outputStrLn $ errorBundlePretty y
-        repl
-    where pp str = parse (parseExpr) "" (pack str)
+    Just input -> case pp input of
+          Right (x, s) -> outputStrLn (unpack x) <* repl s
+          Left y -> outputStrLn (errorBundlePretty y) <* repl state
+    where pp str = parse (runStateT P.repl state) "" (pack str)
