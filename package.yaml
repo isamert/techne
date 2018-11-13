@@ -28,6 +28,7 @@ dependencies:
 - haskeline >= 0.7.3
 - optparse-applicative >= 0.14.3.0
 - mtl >= 2.2.2
+- containers >= 0.5.11.0
 
 default-extensions:
 - OverloadedStrings

@@ -175,4 +175,3 @@ infixId = lexeme $ do
     c3 <- many $ oneOf infixChars
     return $ pack (c1 : c2 : c3)
     where infixChars = "=-_?+-*/&^%$!@<>:|" :: String
-

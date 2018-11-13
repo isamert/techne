@@ -12,14 +12,14 @@ import Frontend.AST
 import Text.Megaparsec
 import Text.Megaparsec.Char
 import Control.Monad.Combinators.Expr
+import qualified Data.Set as Set
 
 -- FIXME: delet this
 repl :: TParser Text
 repl = fmap tshow import_
-    <|> fmap tshow expr
     <|> fmap tshow fnDef
     <|> fmap tshow assign
-    <|> fmap tshow pattern_
+    <|> fmap tshow expr
 
 module_ :: TParser Module
 module_ = do
@@ -38,8 +38,7 @@ import_ = do
 
 assign :: TParser Assign
 assign = do
-    rhs <- rhs
-    void equal
+    rhs <- try $ rhs <* equal
     Assign (rhsName rhs) <$> topLvlExpr rhs
 
 -- Parse top level expressions like functions, concepts, data definitions etc.
@@ -51,15 +50,12 @@ topLvlExpr rhs = data_ rhs
 -- ----------------------------------------------------------------------------
 -- Helpers
 -- ----------------------------------------------------------------------------
-fnRhs :: Name -> TParser RHS
-fnRhs fnname = getFnSignature fnname >>=
-    \case
-      Just sig -> do
-          pattrns <- pattern_`sepBy` comma
-          if length pattrns /= (length sig - 1)
-             then fail "Parameter count differs from function definition"
-             else return $ RHSFn fnname (zipWith Param pattrns sig)
-      Nothing -> fail $ "No function has been defined named" ++ show fnname
+fnRhs :: Name -> [Type] -> TParser RHS
+fnRhs fnname sig = do
+    pattrns <- pattern_`sepBy` comma
+    if length pattrns /= (length sig - 1)
+      then fail "Parameter count differs from function definition"
+      else return $ RHSFn fnname (zipWith Param pattrns sig)
 
 -- | Parses rhs of an assignment. i.e:
 -- | fnName a: String, b: Int OR
@@ -69,10 +65,11 @@ fnRhs fnname = getFnSignature fnname >>=
 rhs :: TParser RHS
 rhs = do
     name <- identifier
-    try (fnRhs name)
-      <|> try (RHSData name <$> constraints1)
-      <|> try (RHSFn name <$> params1 [])
-      <|> return (RHS name)
+    getFnSignature name >>= \case
+      Just sig -> fnRhs name sig
+      Nothing -> try (RHSData name <$> constraints1)
+                   <|> try (RHSFn name <$> params1 [])
+                   <|> return (RHS name)
 
 -- | Add `def` to function definitions of TState
 updateFnDefs :: FnDef -> TParser ()
@@ -320,8 +317,7 @@ fnExpr rhs = FnExpr <$> fn rhs
 -- | updates the state.
 fnDef :: TParser FnDef
 fnDef = do
-    fnname <- identifier
-    colon
+    fnname <- try $ identifier <* colon
     cnsts <- constraintsWithArrow
     types <- identifier `sepBy1` symbol "->"
     eol <|> semicolon
