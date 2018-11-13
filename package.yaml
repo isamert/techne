@@ -24,6 +24,7 @@ dependencies:
 - basic-prelude >= 0.7.0
 - text
 - megaparsec >= 7.0.1
+- parser-combinators >= 1.0.0
 - haskeline >= 0.7.3
 - optparse-applicative >= 0.14.3.0
 - mtl >= 2.2.2
@@ -31,6 +32,7 @@ dependencies:
 default-extensions:
 - OverloadedStrings
 - NoImplicitPrelude
+- LambdaCase
 
 library:
   source-dirs: src

@@ -63,7 +63,6 @@ runOptions :: Options -> IO ()
 runOptions (Options True _ _) = runInputT defaultSettings $ repl initTState
 runOptions _ = return ()
 
-
 repl :: TState -> InputT IO ()
 repl state = getInputLine "> " >>= \case
     Nothing    -> repl state
