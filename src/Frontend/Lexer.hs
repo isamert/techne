@@ -3,7 +3,6 @@ module Frontend.Lexer
     , TErrorBundle(..)
     , TState(..)
     , initTState
-    , testParser
     , hasFn
     , getFnSignature
     , getFnReturnType
@@ -61,7 +60,6 @@ type TParser a = StateT TState (Parsec Void Text) a
 type TErrorBundle = ParseErrorBundle Text Void
 
 initTState = TState []
-testParser p = parseTest (runStateT p initTState)
 
 -- ----------------------------------------------------------------------------
 -- State related functions
