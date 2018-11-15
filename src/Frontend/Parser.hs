@@ -6,6 +6,7 @@ module Frontend.Parser
     ) where
 
 import TechnePrelude
+import Frontend
 import Frontend.Lexer
 import Frontend.AST
 

@@ -1,17 +1,7 @@
 module Frontend.Lexer
-    ( TParser(..)
-    , TErrorBundle(..)
-    , TState(..)
-    , initTState
-    , hasFn
-    , getFnSignature
-    , getFnReturnType
-    -- Re-exports
-    , runStateT
-    , get
-    , put
+    (
     -- Functions
-    , lexeme
+    lexeme
     , spaceConsumer
     , symbol
     , newLine
@@ -47,42 +37,14 @@ module Frontend.Lexer
     ) where
 
 import TechnePrelude
+import Frontend
 import Frontend.AST
 
 import Data.Void
 import Text.Megaparsec
 import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
-import Control.Monad.State.Lazy
 
-newtype TState = TState { stateFnDefs :: [FnDef] } deriving (Show, Eq)
-type TParser a = StateT TState (Parsec Void Text) a
-type TErrorBundle = ParseErrorBundle Text Void
-
-initTState = TState []
-
--- ----------------------------------------------------------------------------
--- State related functions
--- ----------------------------------------------------------------------------
-hasFn :: Name -> TParser Bool
-hasFn fnname = do
-    state <- get
-    return $ fnname `elem` map fnDefName (stateFnDefs state)
-
-getFnSignature :: Name -> TParser (Maybe FnSignature)
-getFnSignature fnname = do
-    state <- get
-    return $ fmap fnDefSignature . headSafe . filter
-      (\(FnDef name sig) -> name == fnname) $ stateFnDefs state
-
-
-getFnReturnType :: Name -> TParser (Maybe Type)
-getFnReturnType fnname = (lastSafe =<<) <$> getFnSignature fnname
-
-
--- ----------------------------------------------------------------------------
--- Building blocks
--- ----------------------------------------------------------------------------
 spaceConsumer :: TParser ()
 spaceConsumer = L.space space1 lineComment blockComment
     where lineComment = L.skipLineComment "#"
@@ -122,9 +84,6 @@ braces    = between lbrace rbrace
 angles    = between langle rangle
 brackets  = between lbracket rbracket
 
--- ----------------------------------------------------------------------------
--- More spesific stuff
--- ----------------------------------------------------------------------------
 -- | A string literal, like "Hey, I'm a string literal"
 -- | Respects the escape sequences.
 stringLit :: TParser Text

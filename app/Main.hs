@@ -3,8 +3,8 @@
 module Main where
 
 import TechnePrelude
+import Frontend
 import Frontend.AST
-import Frontend.Lexer
 import qualified Frontend.Parser as P
 
 import Text.Megaparsec
