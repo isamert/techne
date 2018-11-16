@@ -26,6 +26,7 @@ module_ :: TParser Module
 module_ = do
     imports <- many import_
     assigns <- many assign
+    eof
     return $ Module imports assigns
 
 import_ :: TParser Import

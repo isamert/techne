@@ -20,7 +20,7 @@ import System.Console.Haskeline
 data Options = Options
   { interactive :: Bool
   , output :: Text
-  , input :: Maybe Text }
+  , input :: Maybe String }
 
 optInteractive :: Parser Bool
 optInteractive = switch $
@@ -36,7 +36,7 @@ optOutput = strOption $
     <> metavar "<file>"
     <> help "Place the output into <file>"
 
-optInput :: Parser (Maybe Text)
+optInput :: Parser (Maybe String)
 optInput = optional $ argument str (metavar "<file>")
 
 options :: Parser Options
@@ -60,8 +60,16 @@ main = runOptions =<< execParser opts
 
 -- | Do stuff depending on commandline options.
 runOptions :: Options -> IO ()
+runOptions (Options _ output (Just input)) = runInputT defaultSettings $ do
+    result <- parseFromFile (runStateT P.module_ initTState) input
+    putStrLn $ case result of
+      Right a -> tshow a
+      Left a -> pack $ errorBundlePretty a
+
 runOptions (Options True _ _) = runInputT defaultSettings $ repl initTState
-runOptions _ = return ()
+runOptions (Options i outf inf) = putStrLn $ tshow i <> tshow outf <> tshow inf
+
+parseFromFile p file = runParser p file <$> readFile file
 
 repl :: TState -> InputT IO ()
 repl state = getInputLine "> " >>= \case
