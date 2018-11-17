@@ -1,4 +1,6 @@
-{-# LANGUAGE DeriveFunctor, DeriveFoldable, DeriveTraversable, GeneralizedNewtypeDeriving, MultiParamTypeClasses, FlexibleInstances #-}
+{-# LANGUAGE DeriveFunctor, DeriveTraversable,
+  GeneralizedNewtypeDeriving, MultiParamTypeClasses,
+  FlexibleInstances #-}
 module Frontend.AST where
 
 import TechnePrelude
@@ -9,18 +11,27 @@ type Path = Text
 type ConceptName = Text                         -- a concept name
 type FnSignature = [Type]                       -- a: Int, b: String
 
-data FnDef
-    = FnDef { fnDefName :: Name
-            , fnDefSignature :: FnSignature
-            } deriving (Eq,Show)
+data Expr
+    = IfExpr     (Expr, Expr) [(Expr, Expr)] Expr -- if EXPR then EXPR (elif EXPR then EXPR)... else EXPR
+    | WhenExpr   (Maybe Expr) [(Expr, Expr)]      -- when [EXPR is] (EXPR -> EXPR)...
+    | FnApplExpr { fnApplName :: Name
+                 , fnApplTuple :: Tuple Expr
+                 }
+    | LitExpr    Lit
+    | ListExpr   (List Expr)
+    | TupleExpr  (Tuple Expr)
+    | DataExpr   Data
+    | FnExpr     Fn
+    | RefExpr    Name                             -- a
+    | BinExpr    { binExprOp    :: BinOp
+                 , binExprLeft  :: Expr
+                 , binExprRight :: Expr }
+    -- TODO: | PartialAppExpr
+    deriving (Eq, Show)
 
-data Fn
-    = Fn { fnParams :: [Param]
-         , fnReturnType :: Type
-         , fnBody :: Expr
-         , fnScope :: [Assign] -- where clause
-         } deriving (Eq, Show)
-
+-- ----------------------------------------------------------------------------
+-- Parameters and related stuff
+-- ----------------------------------------------------------------------------
 data Constraint
     = Constraint { constraintName :: Name
                  , constraintConcept :: Name
@@ -46,6 +57,9 @@ data RHS
     | RHS     Name
     deriving (Eq, Show)
 
+-- ----------------------------------------------------------------------------
+-- Module related stuff
+-- ----------------------------------------------------------------------------
 data Import = Import [Path] [Name] -- from Some.Module use Foo, Bar;
     deriving (Eq, Show)
 
@@ -65,6 +79,18 @@ data Pattern
     | UnpackPattern Name (Tuple Pattern) -- A(3, b) where A is a data
     deriving (Eq, Show)
 
+
+-- ----------------------------------------------------------------------------
+-- Primitives
+-- ----------------------------------------------------------------------------
+data Lit
+    = Chr  Char
+    | Str  Text
+    | Int  Integer
+    | Flt  Double
+    | Frac Rational
+    deriving (Eq, Show)
+
 newtype Tuple a
    = Tuple { tupleElems :: [TupleElem a] }
     deriving (Eq, Show, Functor, Semigroup, Monoid)
@@ -78,6 +104,24 @@ newtype List a
     = List [a]
     deriving (Eq, Show, Functor, Semigroup, Monoid)
 
+data BinOp
+    = Add
+    | Sub
+    | Mult
+    | Div
+    | Op Name
+    deriving (Eq, Show)
+
+data Fn
+    = Fn { fnParams :: [Param]
+         , fnReturnType :: Type
+         , fnBody :: Expr
+         , fnScope :: [Assign] -- where clause
+         } deriving (Eq, Show)
+
+-- ----------------------------------------------------------------------------
+-- Top level stuff
+-- ----------------------------------------------------------------------------
 newtype Concept
     = Concept [(Name, [Type])]
     deriving (Eq, Show)
@@ -87,43 +131,13 @@ newtype Concept
 newtype Data = Data [(Name, [DataParam])]
     deriving (Eq, Show)
 
--- TODO: add rational?
-data Lit
-    = Chr  Char
-    | Str  Text
-    | Int  Integer
-    | Flt  Double
-    | Frac Rational
-    deriving (Eq, Show)
+data FnDef
+    = FnDef { fnDefName :: Name
+            , fnDefSignature :: FnSignature
+            } deriving (Eq,Show)
 
 -- | Top-level assignments.
 data Assign = Assign Name Expr
-    deriving (Eq, Show)
-
-data BinOp
-    = Add
-    | Sub
-    | Mult
-    | Div
-    | Op Name
-    deriving (Eq, Show)
-
-data Expr
-    = IfExpr     (Expr, Expr) [(Expr, Expr)] Expr -- if EXPR then EXPR (elif EXPR then EXPR)... else EXPR
-    | WhenExpr   (Maybe Expr) [(Expr, Expr)]      -- when [EXPR is] (EXPR -> EXPR)...
-    | FnApplExpr { fnApplName :: Name
-                 , fnApplTuple :: Tuple Expr
-                 }
-    | LitExpr    Lit
-    | ListExpr   (List Expr)
-    | TupleExpr  (Tuple Expr)
-    | DataExpr   Data
-    | FnExpr     Fn
-    | RefExpr    Name                             -- a
-    | BinExpr    { binExprOp    :: BinOp
-                 , binExprLeft  :: Expr
-                 , binExprRight :: Expr }
-    -- TODO: | PartialAppExpr
     deriving (Eq, Show)
 
 -- ----------------------------------------------------------------------------
@@ -134,7 +148,6 @@ instance Semigroup Expr where
     (ListExpr  e1) <> (ListExpr  e2) = ListExpr  (e1 <> e2)
     (RefExpr   e1) <> (RefExpr   e2) = RefExpr   (e1 <> e2)
     e1 <> e2  = error ("Illegal call: " ++ show e1 ++ " <> " ++ show e2)
-
 
 -- ----------------------------------------------------------------------------
 -- Utility functions
@@ -149,5 +162,3 @@ lookupConstraints typ = filter (\(Constraint name concept) -> name == typ)
 
 prependTuple tuple elem = Tuple (elem : tupleElems tuple)
 prependFnAppl fnAppl expr = fnAppl { fnApplTuple = fnApplTuple fnAppl `prependTuple` expr }
-
-

@@ -73,14 +73,6 @@ rhs = do
                    <|> try (RHSFn name <$> params1 [])
                    <|> return (RHS name)
 
--- | Add `def` to function definitions of TState
-updateFnDefs :: FnDef -> TParser ()
-updateFnDefs def = do
-    hasFn <- hasFn (fnDefName def)
-    when hasFn (fail "More than one definition for same function.")
-    state <- get
-    void . put $ state { stateFnDefs = def : stateFnDefs state }
-
 -- | Convert given typ name to Type using constraints.
 -- | e.g: cs:  [("a", "Show"), ("a", "Numeric")]
 --        typ: a   => PolyType typ ["Show", "Numeric"]

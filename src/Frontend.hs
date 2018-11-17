@@ -10,6 +10,7 @@ module Frontend
     -- Functions
     , initTState
     , hasFn
+    , updateFnDefs
     , getFnSignature
     , getFnReturnType
     ) where
@@ -37,6 +38,14 @@ hasFn :: Name -> TParser Bool
 hasFn fnname = do
     state <- get
     return $ fnname `elem` map fnDefName (stateFnDefs state)
+
+-- | Add `def` to function definitions of TState
+updateFnDefs :: FnDef -> TParser ()
+updateFnDefs def = do
+    hasFn <- hasFn (fnDefName def)
+    when hasFn (fail "More than one definition for same function.")
+    state <- get
+    void . put $ state { stateFnDefs = def : stateFnDefs state }
 
 getFnSignature :: Name -> TParser (Maybe FnSignature)
 getFnSignature fnname = do
