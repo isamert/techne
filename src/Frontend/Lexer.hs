@@ -87,7 +87,7 @@ brackets  = between lbracket rbracket
 -- | A string literal, like "Hey, I'm a string literal"
 -- | Respects the escape sequences.
 stringLit :: TParser Text
-stringLit = lexeme $ pack <$> (char '"' >> manyTill L.charLiteral (char '"')) -- FIXME: pack?
+stringLit = lexeme $ tpack <$> (char '"' >> manyTill L.charLiteral (char '"')) -- FIXME: pack?
 
 -- | A char literal, like 'a' or '\n'
 -- | Respects the escape sequences.
@@ -97,7 +97,7 @@ charLit = lexeme $ char '\'' >> L.charLiteral <* char '\''
 -- | A regex literal (used as pattern generally), like `$[a-z]^` (acutes
 -- | included)
 regexLit :: TParser Text
-regexLit = lexeme $ pack <$> (char '`' >> manyTill L.charLiteral (char '`'))
+regexLit = lexeme $ tpack <$> (char '`' >> manyTill L.charLiteral (char '`'))
 
 float         = lexeme L.float
 integer       = lexeme L.decimal
@@ -119,7 +119,7 @@ rword w = (lexeme . try) (string w >> notFollowedBy alphaNumChar)
 identifier :: TParser Text
 identifier = (lexeme . try) (ident >>= check)
     where identifierChar = noneOf ("\n.,:;{}[]()=|/+\\\"& ." :: String) <?> "an identifer char"
-          ident = pack <$> some identifierChar -- FIXME: pack? Is there something like (some :: TParser Text)?
+          ident = tpack <$> some identifierChar -- FIXME: pack? Is there something like (some :: TParser Text)?
           check w
             | w `elem` rwords = fail $ show w ++ " is a keyword and cannot be an identifier."
             | "-" `tisPrefixOf` w = fail $ "Identifiers cannot start with \"-\": " ++ show w
@@ -130,5 +130,5 @@ infixId = lexeme $ do
     c1 <- oneOf infixChars
     c2 <- oneOf infixChars
     c3 <- many $ oneOf infixChars
-    return $ pack (c1 : c2 : c3)
+    return $ tpack (c1 : c2 : c3)
     where infixChars = "=-_?+-*/&^%$!@<>:|" :: String

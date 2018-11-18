@@ -1,8 +1,6 @@
 module TechnePrelude
     ( -- Module expors
       module BasicPrelude
-    , T.pack
-    , T.unpack
     -- Classes
     , Semigroup
     -- Functions from modules
@@ -15,12 +13,16 @@ module TechnePrelude
     , lookupAll
     , hasNothing
     -- Text stuff
+    , tpack
+    , tunpack
     , tlength
     , tisPrefixOf
     , tnull
     -- Safe
     , headSafe
     , lastSafe
+    -- Utility
+    , tie
     )
     where
 
@@ -52,6 +54,8 @@ hasNothing (x:xs)      = hasNothing xs
 -- ----------------------------------------------------------------------------
 -- Text wrappers
 -- ----------------------------------------------------------------------------
+tpack = T.pack
+tunpack = T.unpack
 tlength = T.length
 tisPrefixOf = T.isPrefixOf
 tnull = T.null
@@ -64,3 +68,9 @@ headSafe xs = Just $ head xs
 
 lastSafe [] = Nothing
 lastSafe xs = Just $ last xs
+
+-- ----------------------------------------------------------------------------
+-- Utility functions
+-- ----------------------------------------------------------------------------
+tie f sep [] = ""
+tie f sep xs = foldr (\x acc -> f x ++ sep ++ acc) "" xs

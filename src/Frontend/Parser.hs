@@ -25,15 +25,15 @@ repl = fmap tshow import_
 module_ :: TParser Module
 module_ = do
     imports <- many import_
-    assigns <- many assign
+    assigns <- many (many fnDef >> assign)
     eof
     return $ Module imports assigns
 
 import_ :: TParser Import
 import_ = do
-    symbol "from"
+    rword "from"
     path <- identifier `sepBy1` dot
-    symbol "use"
+    rword "use"
     endpoint <- identifier `sepBy` dot
     semicolon
     return $ Import path endpoint
@@ -318,4 +318,3 @@ fnDef = do
     let fndef = FnDef fnname (mkTypes cnsts $ map Just types)
     updateFnDefs fndef
     return fndef
-

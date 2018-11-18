@@ -64,7 +64,7 @@ runOptions (Options _ output (Just input)) = runInputT defaultSettings $ do
     result <- parseFromFile (runStateT P.module_ initTState) input
     putStrLn $ case result of
       Right a -> tshow a
-      Left a -> pack $ errorBundlePretty a
+      Left a -> tpack $ errorBundlePretty a
 
 runOptions (Options True _ _) = runInputT defaultSettings $ repl initTState
 runOptions (Options i outf inf) = putStrLn $ tshow i <> tshow outf <> tshow inf
@@ -76,6 +76,6 @@ repl state = getInputLine "> " >>= \case
     Nothing    -> repl state
     Just ":q"  -> return ()
     Just input -> case pp input of
-          Right (x, s) -> outputStrLn (unpack x) <* repl s
+          Right (x, s) -> outputStrLn (tunpack x) <* repl s
           Left y -> outputStrLn (errorBundlePretty y) <* repl state
-    where pp str = parse (runStateT P.repl state) "" (pack str)
+    where pp str = parse (runStateT P.repl state) "" (tpack str)
