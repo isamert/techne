@@ -1,7 +1,7 @@
 module Frontend.Parser
     ( module_
     , expr
-    , assign
+    , decl
     , repl
     ) where
 
@@ -19,15 +19,15 @@ import qualified Data.Set as Set
 repl :: TParser Text
 repl = fmap tshow import_
     <|> fmap tshow fnDef
-    <|> fmap tshow assign
+    <|> fmap tshow decl
     <|> fmap tshow expr
 
 module_ :: TParser Module
 module_ = do
     imports <- many import_
-    assigns <- many (many fnDef >> assign)
+    decls <- many (many (fnDef >>= updateFnDefs) >> decl)
     eof
-    return $ Module imports assigns
+    return $ Module imports decls
 
 import_ :: TParser Import
 import_ = do
@@ -38,53 +38,28 @@ import_ = do
     semicolon
     return $ Import path endpoint
 
-assign :: TParser Assign
-assign = do
-    rhs <- try $ rhs <* equal
-    Assign (rhsName rhs) <$> topLvlExpr rhs
-
--- Parse top level expressions like functions, concepts, data definitions etc.
-topLvlExpr :: RHS -> TParser Expr
-topLvlExpr rhs = data_ rhs
-    <|> fnExpr rhs
-    -- <|> concept rhs
+decl :: TParser Decl
+decl = FnDecl <$> fnTop
+         <|> DataDecl <$> data_
+         <|> ConceptDecl <$> concept
+         <|> ImplDecl <$> impl
 
 -- ----------------------------------------------------------------------------
 -- Helpers
 -- ----------------------------------------------------------------------------
-fnRhs :: Name -> [Type] -> TParser RHS
-fnRhs fnname sig = do
-    pattrns <- pattern_`sepBy` comma
-    if length pattrns /= (length sig - 1)
-      then fail "Parameter count differs from function definition"
-      else return $ RHSFn fnname (zipWith Param pattrns sig)
-
--- | Parses rhs of an assignment. i.e:
--- | fnName a: String, b: Int OR
--- | A a, B b
--- | x: Y is threated as a type definition whereas X y is treated as type
--- | constraint. rhs must only have either type constraints or type defs.
-rhs :: TParser RHS
-rhs = do
-    name <- identifier
-    getFnSignature name >>= \case
-      Just sig -> fnRhs name sig
-      Nothing -> try (RHSData name <$> constraints1)
-                   <|> try (RHSFn name <$> params1 [])
-                   <|> return (RHS name)
-
 -- | Convert given typ name to Type using constraints.
 -- | e.g: cs:  [("a", "Show"), ("a", "Numeric")]
 --        typ: a   => PolyType typ ["Show", "Numeric"]
 --        typ: Int => ConcreteType "Int"
 --        typ: c   => ConcreteType "c"
 mkType :: [Constraint] -> Maybe Name -> Type
-mkType cnsts typ = case typ of
-                      Just typ -> case lookupConstraints typ cnsts of
-                                  [] -> ConcreteType typ
-                                  xs -> PolyType typ $ map
-                                    (\(Constraint name concept) -> concept) xs
-                      Nothing -> UnknownType
+mkType cnsts typ =
+  maybe
+    (GenericType typ)
+    (\typ -> case lookupConstraints typ cnsts of
+         [] -> ConcreteType typ
+         [TypeConstraint name] -> TypeParamType typ
+         xs -> PolyType typ $ map (\(ConceptConstraint _ cncpt) -> cncpt) xs) typ
 
 mkTypes :: [Constraint] -> [Maybe Name] -> [Type]
 mkTypes cnsts = map (mkType cnsts)
@@ -94,7 +69,7 @@ constraint :: TParser Constraint
 constraint = do
     concept <- identifier
     name <- identifier
-    return $ Constraint name concept
+    return $ ConceptConstraint name concept
 
 -- | Parse `A a, B b, C c`
 -- | returns [(a, A), (b, B)]
@@ -127,8 +102,9 @@ param cnsts = do
 
 params :: [Constraint] -> TParser [Param]
 params  cnsts = param cnsts `sepBy`  comma
-params1 cnsts = param cnsts `sepBy1` comma
 
+typeparam :: TParser Param
+typeparam = TypeParam <$> typeparamIdent
 -- ----------------------------------------------------------------------------
 -- Primitives
 -- ----------------------------------------------------------------------------
@@ -151,22 +127,11 @@ lit = Str <$> stringLit
 -- | Parses a lambda function.
 lambda :: TParser Fn
 lambda = do
-    try (rword "fn") <|> rword "λ"
+    rword "fn" <|> rword "λ"
     prms <- params []
     rword "->"
     body <- expr
     return $ Fn prms UnknownType body []
-
-fn :: RHS -> TParser Fn
-fn (RHSFn name prms) = liftM3 (Fn prms)
-                              (fromMaybe UnknownType <$> getFnReturnType name)
-                              expr
-                              where_
-fn (RHS name)        = liftM2 (Fn [] UnknownType) expr where_
-fn _                 = fail "Malformed RHS."
-
-where_ :: TParser [Assign]
-where_ = try $ (rword "where" >> assign `sepBy` comma) <|> return []
 
 fnAppl :: TParser Expr
 fnAppl = liftM2 FnApplExpr
@@ -218,7 +183,7 @@ ops =
       , InfixL (BinExpr Div  <$ symbol "/") ]
     , [ InfixL (BinExpr Add  <$ symbol "+")
       , InfixL (BinExpr Sub  <$ symbol "- ") ]
-    , [InfixL (try $ BinExpr <$> (Op <$> infixId)) ]
+    , [InfixL (try $ BinExpr <$> (Op <$> infixIdent)) ]
     ]
 
 -- ----------------------------------------------------------------------------
@@ -264,51 +229,59 @@ if_ = do
     IfExpr (pred, true) pairs <$> expr
 
 -- ----------------------------------------------------------------------------
--- Top lvl exprs
+-- Top lvl stuff
 -- ----------------------------------------------------------------------------
--- FIXME: This is fucked up
-data_ :: RHS -> TParser Expr
-data_ rhs = do
+-- TODO: if it's a product type with no name, gave type const.'s name
+-- TODO: type parameters
+data_ :: TParser Data
+data_ = do
     rword "data"
-    localCnsts <- constraintsWithArrow
-    when (null localCnsts) $ void (symbol "=>" <|> return "") -- optional `=>`
-    (name, cnsts) <- case rhs of
-      RHSData name cnsts -> return (name, cnsts ++ localCnsts)
-      RHS name           -> return (name, localCnsts)
-      _ -> fail "Data definitions may only have type constraints on RHS."
-    dat <- sum cnsts
-    DataExpr . Data <$> finalize dat name
+    name <- dataIdent
+    equal
+    cnsts <- constraintsWithArrow
+    base <- try (parens (dataParams cnsts) <* symbol "=>") <|> return []
+    asd <- sum cnsts
+    return $ Data (asd `prependBase` base)
     where sum     cnsts = product cnsts `sepBy1` bar
           product cnsts = liftM2 (,)
-              (Just <$> identifier <|> return Nothing)
-              (parens (dataParams cnsts) <|> return [])
+              identifier
+              (parens (dataParams cnsts))
           dataParam cnsts = do
               name <- identifier
-              typ <- colon >> identifier
+              typ  <- colon >> identifier
               return $ DataParam name (mkType cnsts (Just typ))
           dataParams cnsts = dataParam cnsts `sepBy1` comma
-          finalize dat name
-              -- If it's a product data and if it has no name, set the name of
-              -- the data same as type name from rhs.
-              | length dat == 1 && (isNothing . fst . head) dat =
-                  if tnull name
-                     then fail "Data definition should have a name."
-                     else return $ map (\(a,b) -> (name, b)) dat
-              | hasNothing $ map fst dat =
-                  fail "Some of the data definitions don't have a name."
-              | otherwise = return $ map (\(a,b) -> (fromJust a,b)) dat
+          prependBase dat base = map (fmap (base ++)) dat
 
-concept :: RHS -> TParser Expr
-concept rhs = undefined
+-- TODO: add default impls
+-- fnDefs
+concept :: TParser Concept
+concept = do
+    rword "concept"
+    name <- conceptIdent
+    rword "of"
+    tprm <- typeparam
+    reqs <- some ((rword "requires" <|> rword "reqs") >> fnDef)
+    return $ Concept tprm reqs
 
-impl :: RHS -> TParser Expr
-impl rhs = undefined
+impl :: TParser Impl
+impl = undefined
 
-fnExpr :: RHS -> TParser Expr
-fnExpr rhs = FnExpr <$> fn rhs
+fnTop :: TParser Fn
+fnTop = do
+    name <- identifier
+    params <- getFnSignature name >>= \case
+        Just sig -> pattern_`sepBy` comma >>= \pattrns ->
+            if length pattrns /= (length sig - 1)
+              then fail "Parameter count differs from function definition"
+              else return $ zipWith Param pattrns sig
+        Nothing -> params []
+    equal
+    liftM3 (Fn params)
+           (fromMaybe UnknownType <$> getFnReturnType name) expr where_
+    where where_ = (rword "where" >> decl `sepBy` comma) <|> return []
 
--- | Parses top-level function definitions like `f : A a => a -> B` and
--- | updates the state.
+-- | Parses top-level function definitions like `f : A a => a -> B`.
 fnDef :: TParser FnDef
 fnDef = do
     fnname <- try $ identifier <* colon
@@ -316,5 +289,4 @@ fnDef = do
     types <- identifier `sepBy1` symbol "->"
     eol <|> semicolon
     let fndef = FnDef fnname (mkTypes cnsts $ map Just types)
-    updateFnDefs fndef
     return fndef

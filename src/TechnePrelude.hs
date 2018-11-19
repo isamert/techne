@@ -18,6 +18,7 @@ module TechnePrelude
     , tlength
     , tisPrefixOf
     , tnull
+    , tisUpperFirst
     -- Safe
     , headSafe
     , lastSafe
@@ -59,6 +60,7 @@ tunpack = T.unpack
 tlength = T.length
 tisPrefixOf = T.isPrefixOf
 tnull = T.null
+tisUpperFirst t = not (tnull t) && C.isUpper (T.head t)
 
 -- ----------------------------------------------------------------------------
 -- Safe re-implementations

@@ -20,7 +20,6 @@ data Expr
     | LitExpr    Lit
     | ListExpr   (List Expr)
     | TupleExpr  (Tuple Expr)
-    | DataExpr   Data
     | FnExpr     Fn
     | RefExpr    Name                             -- a
     | BinExpr    { binExprOp    :: BinOp
@@ -33,29 +32,15 @@ data Expr
 -- Parameters and related stuff
 -- ----------------------------------------------------------------------------
 data Constraint
-    = Constraint { constraintName :: Name
-                 , constraintConcept :: Name
-                 } deriving (Eq)
+    = ConceptConstraint Name ConceptName -- A a => a
+    | TypeConstraint Name                -- concept X of a
+    deriving (Eq, Show)
 
 data Param
-    = Param { paramPattern :: Pattern
-            , paramType :: Type
-            } deriving (Eq)
-
--- Data parameters are different from other
--- parameters because other parameters may be
--- patterns while data params cannot.
-data DataParam
-    = DataParam { dataParamName :: Name
-                , dataParamType :: Type
-                } deriving (Eq)
-
--- | Right hand side of an assignment.
-data RHS
-    = RHSData Name [Constraint]
-    | RHSFn   Name [Param]
-    | RHS     Name
-    deriving (Eq, Show)
+    = Param Pattern Type
+    | DataParam Name Type
+    | TypeParam Name
+    deriving (Eq)
 
 -- ----------------------------------------------------------------------------
 -- Module related stuff
@@ -63,12 +48,14 @@ data RHS
 data Import = Import [Path] [Name] -- from Some.Module use Foo, Bar;
     deriving (Eq, Show)
 
-data Module = Module [Import] [Assign]
+data Module = Module [Import] [Decl]
     deriving (Eq)
 
 data Type
     = ConcreteType Name           -- Int
     | PolyType Name [ConceptName] -- `Show a => a` => PolyType a (Just "Show")
+    | TypeParamType Name          -- concept X of a reqs f : a -> a => a is TypeParamType here
+    | GenericType Name            -- a
     | UnknownType                 -- ...
     deriving (Eq)
 
@@ -79,13 +66,14 @@ data Pattern
     | UnpackPattern Name (Tuple Pattern) -- A(3, b) where A is a data
     deriving (Eq)
 
-newtype Concept
-    = Concept [(Name, [Type])]
+newtype Impl = Impl Text deriving (Eq, Show)
+data Concept
+    = Concept Param [FnDef]
     deriving (Eq, Show)
 
 -- Represents a sum type. If data has only one product type then think like
 -- it's just a product type.
-newtype Data = Data [(Name, [DataParam])]
+newtype Data = Data [(Name, [Param])]
     deriving (Eq)
 
 data FnDef
@@ -93,9 +81,13 @@ data FnDef
             , fnDefSignature :: FnSignature
             } deriving (Eq,Show)
 
--- | Top-level assignments.
-data Assign = Assign Name Expr
-    deriving (Eq)
+-- | Top-level declarations
+data Decl
+    = FnDecl Fn
+    | DataDecl Data
+    | ConceptDecl Concept
+    | ImplDecl Impl
+    deriving (Eq, Show)
 
 -- ----------------------------------------------------------------------------
 -- Primitives
@@ -133,7 +125,7 @@ data Fn
     = Fn { fnParams :: [Param]
          , fnReturnType :: Type
          , fnBody :: Expr
-         , fnScope :: [Assign] -- where clause
+         , fnScope :: [Decl] -- where clause
          } deriving (Eq)
 
 -- ----------------------------------------------------------------------------
@@ -147,7 +139,6 @@ instance Show Expr where
     show (LitExpr lit) = show lit
     show (ListExpr list) = show list
     show (TupleExpr tuple) = show tuple
-    show (DataExpr dat) = show dat
     show (FnExpr fn) = show fn
     show (RefExpr name) = tunpack name
     show (BinExpr op left right) = show left ++ " " ++ show op ++ " " ++ show right
@@ -155,8 +146,9 @@ instance Show Expr where
 instance Show Module where
     show (Module is as) = tie show "\n" is ++ tie show "\n" as
 
-instance Show Assign where
-    show (Assign name expr) = tunpack name ++ " = " ++ show expr
+-- FIXME:
+--instance Show Decl where
+    --show (Decl name expr) = tunpack name ++ " = " ++ show expr
 
 instance Show Pattern where
     show (BindPattern name)          = tunpack name
@@ -202,15 +194,11 @@ instance Show Data where
         where showSum (name, typs) =  tunpack name
                                       ++ " (" ++ tie show ", " typs ++ ")"
 
-instance Show Constraint where
-    show (Constraint name concept) = tunpack concept ++ " " ++ tunpack name
-
 instance Show Param where
     show (Param (BindPattern p) typ) = tunpack p ++ ": " ++ show typ
     show (Param p typ)               = show p
-
-instance Show DataParam where
-    show (DataParam name typ) = tunpack name ++ ": " ++ show typ
+    show (DataParam name typ)        = tunpack name ++ ": " ++ show typ
+    show (TypeParam name)            = tunpack name
 
 instance Show Type where
     show (ConcreteType name) = tunpack name
@@ -229,13 +217,12 @@ instance Semigroup Expr where
 -- ----------------------------------------------------------------------------
 -- Utility functions
 -- ----------------------------------------------------------------------------
-rhsName (RHSData name _) = name
-rhsName (RHSFn   name _) = name
-rhsName (RHS     name)   = name
-
 isBindPattern (BindPattern _ ) = True
 
-lookupConstraints typ = filter (\(Constraint name concept) -> name == typ)
+lookupConstraints typ =
+    filter (\case
+             (ConceptConstraint name concept) -> name == typ
+             (TypeConstraint name) -> name == typ)
 
 prependTuple tuple elem = Tuple (elem : tupleElems tuple)
 prependFnAppl fnAppl expr = fnAppl { fnApplTuple = fnApplTuple fnAppl `prependTuple` expr }

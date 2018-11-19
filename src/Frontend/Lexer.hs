@@ -33,7 +33,10 @@ module Frontend.Lexer
     , rwords
     , rword
     , identifier
-    , infixId
+    , infixIdent
+    , dataIdent
+    , conceptIdent
+    , typeparamIdent
     ) where
 
 import TechnePrelude
@@ -125,10 +128,19 @@ identifier = (lexeme . try) (ident >>= check)
             | "-" `tisPrefixOf` w = fail $ "Identifiers cannot start with \"-\": " ++ show w
             | otherwise = return w
 
-infixId :: TParser Text
-infixId = lexeme $ do
+infixIdent :: TParser Text
+infixIdent = lexeme $ do
     c1 <- oneOf infixChars
     c2 <- oneOf infixChars
     c3 <- many $ oneOf infixChars
     return $ tpack (c1 : c2 : c3)
     where infixChars = "=-_?+-*/&^%$!@<>:|" :: String
+
+dataIdent :: TParser Text
+dataIdent = identifier
+
+conceptIdent :: TParser Text
+conceptIdent = identifier
+
+typeparamIdent :: TParser Text
+typeparamIdent = identifier
