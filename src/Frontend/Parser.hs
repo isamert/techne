@@ -53,13 +53,16 @@ decl = FnDecl <$> fnTop
 --        typ: Int => ConcreteType "Int"
 --        typ: c   => ConcreteType "c"
 mkType :: [Constraint] -> Maybe Name -> Type
-mkType cnsts typ =
-  maybe
-    (GenericType typ)
-    (\typ -> case lookupConstraints typ cnsts of
+mkType cnsts typ = case typ of
+    Just typ -> case lookupConstraints typ cnsts of
          [] -> ConcreteType typ
-         [TypeConstraint name] -> TypeParamType typ
-         xs -> PolyType typ $ map (\(ConceptConstraint _ cncpt) -> cncpt) xs) typ
+         [TypeConstraint name] -> ConstraintType typ
+         xs -> PolyType typ $ map (\case
+             ConceptConstraint _ cncpt -> cncpt
+             TypeConstraint _ -> error "YOU FUCKED UP") xs
+             -- FIXME: needs better error handling
+             -- Maybe do this in monad and fail
+    Nothing -> UnknownType
 
 mkTypes :: [Constraint] -> [Maybe Name] -> [Type]
 mkTypes cnsts = map (mkType cnsts)
@@ -103,8 +106,10 @@ param cnsts = do
 params :: [Constraint] -> TParser [Param]
 params  cnsts = param cnsts `sepBy`  comma
 
-typeparam :: TParser Param
-typeparam = TypeParam <$> typeparamIdent
+-- Parse a type parameter, or as I recently taken call type constraint
+typeconst :: TParser Constraint
+typeconst = TypeConstraint <$> typeparamIdent
+
 -- ----------------------------------------------------------------------------
 -- Primitives
 -- ----------------------------------------------------------------------------
@@ -175,6 +180,16 @@ term = when_
          <|> lambdaExpr
          <|> RefExpr <$> identifier
 
+-- TODO: Create user defined suffix operators.
+--       For example define a operator named `?` inside a concept like
+--       Questionable which applies the next function call the value inside `a`
+--       So the problem is how the hell ? operator knows about the next
+--       function call? What about two types of suffix functions. One works
+--       like an infix function and one works like just a suffix.
+--       God help me, this is getting out of control.
+--       What about ?. being an infix function? Does it work with chaining
+--       function calls? Investigate.
+-- TODO: Create user defined prefix operators.
 -- TODO: Instead of defining precedence rules like haskell, make some chars
 -- define precedence rules. Like if an operator contains : then precedence
 -- is 7 etc.
@@ -232,16 +247,18 @@ if_ = do
 -- Top lvl stuff
 -- ----------------------------------------------------------------------------
 -- TODO: if it's a product type with no name, gave type const.'s name
--- TODO: type parameters
+-- FIXME: find a better syntax for existentialCnsts
 data_ :: TParser Data
 data_ = do
     rword "data"
     name <- dataIdent
+    typecnsts <- typeconst `sepBy` comma
     equal
-    cnsts <- constraintsWithArrow
+    existentialCnsts <- constraintsWithArrow
+    let cnsts = typecnsts ++ existentialCnsts
     base <- try (parens (dataParams cnsts) <* symbol "=>") <|> return []
-    asd <- sum cnsts
-    return $ Data (asd `prependBase` base)
+    datadefs <- sum cnsts
+    return $ Data (datadefs `prependBase` base)
     where sum     cnsts = product cnsts `sepBy1` bar
           product cnsts = liftM2 (,)
               identifier
@@ -253,25 +270,33 @@ data_ = do
           dataParams cnsts = dataParam cnsts `sepBy1` comma
           prependBase dat base = map (fmap (base ++)) dat
 
--- TODO: add default impls
+-- TODO: add default impls (maybe using def/default keyword)
 -- fnDefs
 concept :: TParser Concept
 concept = do
     rword "concept"
     name <- conceptIdent
     rword "of"
-    tprm <- typeparam
-    reqs <- some ((rword "requires" <|> rword "reqs") >> fnDef)
-    return $ Concept tprm reqs
+    tcnst <- typeconst
+    reqs <- some ((rword "requires" <|> rword "reqs")
+                    >> fnDefWithConstraints [tcnst])
+    return $ Concept tcnst reqs
 
 impl :: TParser Impl
-impl = undefined
+impl = do
+    rword "impl"
+    cname <- dataIdent
+    rword "for"
+    dname <- dataIdent
+    fns <- many (rword "impls" >> fnTop) -- FIXME: better keyword pls
+    return $ Impl cname dname fns
 
 fnTop :: TParser Fn
 fnTop = do
     name <- identifier
     params <- getFnSignature name >>= \case
         Just sig -> pattern_`sepBy` comma >>= \pattrns ->
+            -- FIXME: What if function is in dotfree notation?:
             if length pattrns /= (length sig - 1)
               then fail "Parameter count differs from function definition"
               else return $ zipWith Param pattrns sig
@@ -281,12 +306,16 @@ fnTop = do
            (fromMaybe UnknownType <$> getFnReturnType name) expr where_
     where where_ = (rword "where" >> decl `sepBy` comma) <|> return []
 
--- | Parses top-level function definitions like `f : A a => a -> B`.
-fnDef :: TParser FnDef
-fnDef = do
+fnDefWithConstraints :: [Constraint] -> TParser FnDef
+fnDefWithConstraints constraints = do
     fnname <- try $ identifier <* colon
-    cnsts <- constraintsWithArrow
+    lclCnsts <- constraintsWithArrow
+    let cnsts = constraints ++ lclCnsts
     types <- identifier `sepBy1` symbol "->"
     eol <|> semicolon
     let fndef = FnDef fnname (mkTypes cnsts $ map Just types)
     return fndef
+
+-- | Parses top-level function definitions like `f : A a => a -> B`.
+fnDef :: TParser FnDef
+fnDef = fnDefWithConstraints []

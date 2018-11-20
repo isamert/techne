@@ -6,10 +6,11 @@ module Frontend.AST where
 import TechnePrelude
 
 -- Some type's for clarification
-type Name = Text
-type Path = Text
-type ConceptName = Text                         -- a concept name
-type FnSignature = [Type]                       -- a: Int, b: String
+type Name        = Text
+type Path        = Text
+type ConceptName = Text   -- a concept name
+type DataName    = Text   -- a concept name
+type FnSignature = [Type] -- a: Int, b: String
 
 data Expr
     = IfExpr     (Expr, Expr) [(Expr, Expr)] Expr -- if EXPR then EXPR (elif EXPR then EXPR)... else EXPR
@@ -39,7 +40,6 @@ data Constraint
 data Param
     = Param Pattern Type
     | DataParam Name Type
-    | TypeParam Name
     deriving (Eq)
 
 -- ----------------------------------------------------------------------------
@@ -54,7 +54,7 @@ data Module = Module [Import] [Decl]
 data Type
     = ConcreteType Name           -- Int
     | PolyType Name [ConceptName] -- `Show a => a` => PolyType a (Just "Show")
-    | TypeParamType Name          -- concept X of a reqs f : a -> a => a is TypeParamType here
+    | ConstraintType Name          -- concept X of a reqs f : a -> a => a is TypeParamType here
     | GenericType Name            -- a
     | UnknownType                 -- ...
     deriving (Eq)
@@ -66,9 +66,12 @@ data Pattern
     | UnpackPattern Name (Tuple Pattern) -- A(3, b) where A is a data
     deriving (Eq)
 
-newtype Impl = Impl Text deriving (Eq, Show)
+data Impl
+    = Impl ConceptName DataName [Fn]
+    deriving (Eq, Show)
+
 data Concept
-    = Concept Param [FnDef]
+    = Concept Constraint [FnDef]
     deriving (Eq, Show)
 
 -- Represents a sum type. If data has only one product type then think like
@@ -198,12 +201,12 @@ instance Show Param where
     show (Param (BindPattern p) typ) = tunpack p ++ ": " ++ show typ
     show (Param p typ)               = show p
     show (DataParam name typ)        = tunpack name ++ ": " ++ show typ
-    show (TypeParam name)            = tunpack name
 
 instance Show Type where
-    show (ConcreteType name) = tunpack name
+    show (ConcreteType name)      = tunpack name
     show (PolyType name concepts) = tunpack name ++ "!"
-    show UnknownType = "??"
+    show (ConstraintType name)    = tunpack name ++ "!!"
+    show UnknownType              = "??"
 
 -- ----------------------------------------------------------------------------
 -- Other instances
