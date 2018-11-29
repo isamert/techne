@@ -7,6 +7,8 @@ module TechnePrelude
     , trace
     , traceId
     , fromJust
+    , fromRight
+    , fromLeft
     -- Defined functions
     , startsLower
     , startsUpper
@@ -19,11 +21,14 @@ module TechnePrelude
     , tisPrefixOf
     , tnull
     , tisUpperFirst
+    , tcons
     -- Safe
     , headSafe
     , lastSafe
     -- Utility
     , tie
+    , fromRight'
+    , fromLeft'
     )
     where
 
@@ -32,6 +37,7 @@ import qualified Data.Text as T
 import qualified Data.Char as C
 import Data.Semigroup
 import Data.Maybe (fromJust)
+import Data.Either (fromRight, fromLeft)
 
 import Debug.Trace (trace, traceId) -- TODO: Remove in production
 
@@ -61,6 +67,7 @@ tlength = T.length
 tisPrefixOf = T.isPrefixOf
 tnull = T.null
 tisUpperFirst t = not (tnull t) && C.isUpper (T.head t)
+tcons = T.cons
 
 -- ----------------------------------------------------------------------------
 -- Safe re-implementations
@@ -76,3 +83,6 @@ lastSafe xs = Just $ last xs
 -- ----------------------------------------------------------------------------
 tie f sep [] = ""
 tie f sep xs = foldr (\x acc -> f x ++ sep ++ acc) "" xs
+
+fromRight' (Right x) = x
+fromLeft' (Left x) = x

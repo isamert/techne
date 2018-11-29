@@ -15,13 +15,14 @@ module Frontend
     , getFnReturnType
     -- Helpers
     , testParser
+    , tparse
     ) where
 
 import TechnePrelude
 import Frontend.AST
 
 import Data.Void (Void)
-import Text.Megaparsec (Parsec, ParseErrorBundle, parseTest)
+import Text.Megaparsec (Parsec, ParseErrorBundle, parse, parseTest)
 import Control.Monad.State.Lazy (StateT, runStateT, get, put)
 
 -- ----------------------------------------------------------------------------
@@ -62,3 +63,4 @@ getFnReturnType fnname = (lastSafe =<<) <$> getFnSignature fnname
 -- Helper functions
 -- ----------------------------------------------------------------------------
 testParser p = parseTest (runStateT p initTState)
+tparse p = parse (runStateT p initTState)

@@ -6,10 +6,12 @@ import TechnePrelude
 import Frontend
 import Frontend.AST
 import qualified Frontend.Parser as P
+import Frontend.Desugar
 
 import Text.Megaparsec
 import Text.Megaparsec.Error
 
+import Control.Monad.State.Lazy (StateT, runStateT, get, put)
 import Options.Applicative
 import Data.Semigroup ((<>))
 import System.Console.Haskeline
@@ -76,6 +78,6 @@ repl state = getInputLine "> " >>= \case
     Nothing    -> repl state
     Just ":q"  -> return ()
     Just input -> case pp input of
-          Right (x, s) -> outputStrLn (tunpack x) <* repl s
+          Right (x, s) -> outputStrLn (show $ desugar x) <* repl s
           Left y -> outputStrLn (errorBundlePretty y) <* repl state
-    where pp str = parse (runStateT P.repl state) "" (tpack str)
+    where pp str = parse (runStateT P.expr state) "" (tpack str)

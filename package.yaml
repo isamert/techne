@@ -30,6 +30,8 @@ dependencies:
 - mtl >= 2.2.2
 - containers >= 0.5.11.0
 - HUnit >= 1.6.0.0
+- uniplate >= 1.6.12
+
 
 default-extensions:
 - OverloadedStrings

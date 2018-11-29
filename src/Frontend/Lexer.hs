@@ -34,6 +34,7 @@ module Frontend.Lexer
     , rword
     , identifier
     , infixIdent
+    , genericIdent
     , dataIdent
     , conceptIdent
     , typeparamIdent
@@ -81,6 +82,7 @@ rangle    = symbol ">"
 lbracket  = symbol "["
 rbracket  = symbol "]"
 equal     = symbol "="
+tilde     = symbol "~"
 
 parens    = between lparen rparen
 braces    = between lbrace rbrace
@@ -121,26 +123,36 @@ rword w = (lexeme . try) (string w >> notFollowedBy alphaNumChar)
 -- FIXME: get rid of noneOf
 identifier :: TParser Text
 identifier = (lexeme . try) (ident >>= check)
-    where identifierChar = noneOf ("\n.,:;{}[]()=|/+\\\"& ." :: String) <?> "an identifer char"
+    where identifierChar = alphaNumChar <?> "an identifer char" -- FIXME: add other stuff
           ident = tpack <$> some identifierChar -- FIXME: pack? Is there something like (some :: TParser Text)?
           check w
             | w `elem` rwords = fail $ show w ++ " is a keyword and cannot be an identifier."
             | "-" `tisPrefixOf` w = fail $ "Identifiers cannot start with \"-\": " ++ show w
             | otherwise = return w
 
+upcaseIdent :: TParser Text
+upcaseIdent = lexeme . try $ liftM2 tcons upperChar identifier
+
+lowcaseIdent :: TParser Text
+lowcaseIdent = lexeme . try $ liftM2 tcons lowerChar identifier
+
 infixIdent :: TParser Text
-infixIdent = lexeme $ do
+infixIdent = lexeme . try $ do
     c1 <- oneOf infixChars
     c2 <- oneOf infixChars
     c3 <- many $ oneOf infixChars
     return $ tpack (c1 : c2 : c3)
     where infixChars = "=-_?+-*/&^%$!@<>:|" :: String
 
+-- | A generic parameter identifier like ~a.
+genericIdent :: TParser Text
+genericIdent = lexeme . try $ char '~' >> identifier
+
 dataIdent :: TParser Text
-dataIdent = identifier
+dataIdent = upcaseIdent
 
 conceptIdent :: TParser Text
-conceptIdent = identifier
+conceptIdent = upcaseIdent
 
 typeparamIdent :: TParser Text
-typeparamIdent = identifier
+typeparamIdent = lowcaseIdent

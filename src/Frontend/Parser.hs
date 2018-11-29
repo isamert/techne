@@ -2,7 +2,6 @@ module Frontend.Parser
     ( module_
     , expr
     , decl
-    , repl
     ) where
 
 import TechnePrelude
@@ -14,13 +13,6 @@ import Text.Megaparsec
 import Text.Megaparsec.Char
 import Control.Monad.Combinators.Expr
 import qualified Data.Set as Set
-
--- FIXME: delet this
-repl :: TParser Text
-repl = fmap tshow import_
-    <|> fmap tshow fnDef
-    <|> fmap tshow decl
-    <|> fmap tshow expr
 
 module_ :: TParser Module
 module_ = do
@@ -47,25 +39,17 @@ decl = FnDecl <$> fnTop
 -- ----------------------------------------------------------------------------
 -- Helpers
 -- ----------------------------------------------------------------------------
--- | Convert given typ name to Type using constraints.
--- | e.g: cs:  [("a", "Show"), ("a", "Numeric")]
---        typ: a   => PolyType typ ["Show", "Numeric"]
---        typ: Int => ConcreteType "Int"
---        typ: c   => ConcreteType "c"
-mkType :: [Constraint] -> Maybe Name -> Type
-mkType cnsts typ = case typ of
-    Just typ -> case lookupConstraints typ cnsts of
-         [] -> ConcreteType typ
-         [TypeConstraint name] -> ConstraintType typ
-         xs -> PolyType typ $ map (\case
-             ConceptConstraint _ cncpt -> cncpt
-             TypeConstraint _ -> error "YOU FUCKED UP") xs
-             -- FIXME: needs better error handling
-             -- Maybe do this in monad and fail
-    Nothing -> UnknownType
-
-mkTypes :: [Constraint] -> [Maybe Name] -> [Type]
-mkTypes cnsts = map (mkType cnsts)
+typeWithConstraints :: [Constraint] -> TParser Type
+typeWithConstraints cnsts =
+    (flip PolyType [] <$> genericIdent) <|> do
+        tname <- identifier
+        case lookupConstraints tname cnsts of
+          []                    -> return $ ConcreteType tname
+          [TypeConstraint name] -> return $ ConstraintType tname
+          xs -> PolyType tname <$> mapM
+                 (\case
+                   ConceptConstraint _ cncpt -> return cncpt
+                   TypeConstraint _ -> fail "A type constraint cannot appear here.") xs
 
 -- | Parse `A a`, return (a, A)
 constraint :: TParser Constraint
@@ -95,13 +79,12 @@ pattern_ = LitPattern <$> lit
     where unpackPattern =
             liftM2 UnpackPattern identifier $ tuple pattern_
 
--- | Parse `a: Type`
--- | Handles type constraints if given any.
+-- | Parse `a: Type` or `a`. Handles type constraints if given any.
 param :: [Constraint] -> TParser Param
 param cnsts = do
     pattrn <- pattern_
-    typ <- optional (colon >> identifier)
-    return $ Param pattrn (mkType cnsts typ)
+    typ <- optional (colon >> typeWithConstraints cnsts)
+    return $ Param pattrn (fromMaybe UnknownType typ)
 
 params :: [Constraint] -> TParser [Param]
 params  cnsts = param cnsts `sepBy`  comma
@@ -113,6 +96,10 @@ typeconst = TypeConstraint <$> typeparamIdent
 -- ----------------------------------------------------------------------------
 -- Primitives
 -- ----------------------------------------------------------------------------
+ref :: TParser Ref
+ref = Ref <$> identifier
+      <|> PlaceHolder <$> (char '$' >> integer)
+
 tuple :: TParser a -> TParser (Tuple a)
 tuple p = Tuple <$> parens (tupElem `sepBy` comma)
     where tupElem = do ident <- optional $ try (identifier <* equal)
@@ -163,7 +150,7 @@ fnCall = do
                        <|> listExpr
                        <|> tupleExpr
                        <|> lambdaExpr
-                       <|> RefExpr <$> identifier
+                       <|> refExpr
 
 expr :: TParser Expr
 expr = makeExprParser term ops
@@ -178,17 +165,8 @@ term = when_
          <|> try (parens expr)
          <|> tupleExpr
          <|> lambdaExpr
-         <|> RefExpr <$> identifier
+         <|> refExpr
 
--- TODO: Create user defined suffix operators.
---       For example define a operator named `?` inside a concept like
---       Questionable which applies the next function call the value inside `a`
---       So the problem is how the hell ? operator knows about the next
---       function call? What about two types of suffix functions. One works
---       like an infix function and one works like just a suffix.
---       God help me, this is getting out of control.
---       What about ?. being an infix function? Does it work with chaining
---       function calls? Investigate.
 -- TODO: Create user defined prefix operators.
 -- TODO: Instead of defining precedence rules like haskell, make some chars
 -- define precedence rules. Like if an operator contains : then precedence
@@ -204,6 +182,9 @@ ops =
 -- ----------------------------------------------------------------------------
 -- Local exprs
 -- ----------------------------------------------------------------------------
+refExpr :: TParser Expr
+refExpr = RefExpr <$> ref
+
 tupleExpr :: TParser Expr
 tupleExpr = TupleExpr <$> tuple expr
 
@@ -248,7 +229,7 @@ if_ = do
 -- ----------------------------------------------------------------------------
 -- TODO: if it's a product type with no name, gave type const.'s name
 -- FIXME: find a better syntax for existentialCnsts
-data_ :: TParser Data
+data_ :: TParser Dat
 data_ = do
     rword "data"
     name <- dataIdent
@@ -258,15 +239,15 @@ data_ = do
     let cnsts = typecnsts ++ existentialCnsts
     base <- try (parens (dataParams cnsts) <* symbol "=>") <|> return []
     datadefs <- sum cnsts
-    return $ Data (datadefs `prependBase` base)
+    return $ Dat (datadefs `prependBase` base)
     where sum     cnsts = product cnsts `sepBy1` bar
           product cnsts = liftM2 (,)
               identifier
               (parens (dataParams cnsts))
           dataParam cnsts = do
               name <- identifier
-              typ  <- colon >> identifier
-              return $ DataParam name (mkType cnsts (Just typ))
+              typ  <- colon >> typeWithConstraints cnsts
+              return $ DataParam name typ
           dataParams cnsts = dataParam cnsts `sepBy1` comma
           prependBase dat base = map (fmap (base ++)) dat
 
@@ -311,9 +292,9 @@ fnDefWithConstraints constraints = do
     fnname <- try $ identifier <* colon
     lclCnsts <- constraintsWithArrow
     let cnsts = constraints ++ lclCnsts
-    types <- identifier `sepBy1` symbol "->"
+    types <- typeWithConstraints cnsts `sepBy1` symbol "->"
     eol <|> semicolon
-    let fndef = FnDef fnname (mkTypes cnsts $ map Just types)
+    let fndef = FnDef fnname types
     return fndef
 
 -- | Parses top-level function definitions like `f : A a => a -> B`.
