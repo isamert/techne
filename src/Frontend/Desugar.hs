@@ -17,7 +17,7 @@ desugarExprPH = transform exprPHtoFn
 
 -- | Convert all (RefExpr (PlaceHolder _)) to (RefExpr (Ref _)).
 renamePHs = transform renamer
-    where renamer (RefExpr (PlaceHolder x)) = RefExpr $ Ref ("ph$" ++ tshow x)
+    where renamer (RefExpr (PlaceHolder x)) = RefExpr $ Ref ("ph$" ++ tshow x) UnknownType
           renamer x = x
 
 -- ----------------------------------------------------------------------------

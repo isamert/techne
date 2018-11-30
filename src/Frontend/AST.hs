@@ -42,9 +42,9 @@ data Param
     deriving (Eq, Data, Typeable)
 
 data Ref
-    = Ref Name            -- a
+    = Ref Name Type       -- a
     | PlaceHolder Integer -- "$1"
-    deriving (Eq, Ord, Show, Data, Typeable)
+    deriving (Eq, Show, Data, Typeable)
 
 -- ----------------------------------------------------------------------------
 -- Module related stuff
@@ -57,7 +57,7 @@ data Module = Module [Import] [Decl]
 
 data Type
     = ConcreteType Name           -- Int
-    | PolyType Name [ConceptName] -- `Show a => a` => PolyType a (Just "Show")
+    | PolyType Name [ConceptName] -- `Show a => a` => PolyType a ["Show"]
     | ConstraintType Name         -- concept X of a reqs f : a -> a => `a` is ContraintType
     | UnknownType                 -- Used as placeholder while parsing.
     deriving (Eq, Data, Typeable)
@@ -218,8 +218,11 @@ instance Show Type where
 instance Semigroup Expr where
     (TupleExpr e1) <> (TupleExpr e2) = TupleExpr (e1 <> e2)
     (ListExpr  e1) <> (ListExpr  e2) = ListExpr  (e1 <> e2)
-    (RefExpr (Ref e1)) <> (RefExpr (Ref e2)) = RefExpr $ Ref (e1 <> e2)
     e1 <> e2  = error ("Illegal call: " ++ show e1 ++ " <> " ++ show e2)
+
+instance Ord Ref where
+    compare (PlaceHolder x) (PlaceHolder y) = compare x y
+    compare _ _ = EQ
 
 -- ----------------------------------------------------------------------------
 -- Utility functions
@@ -235,4 +238,4 @@ prependTuple tuple elem = Tuple (elem : tupleElems tuple)
 prependFnAppl fnAppl expr = fnAppl { fnApplTuple = fnApplTuple fnAppl `prependTuple` expr }
 
 simpleParam name = Param (BindPattern name)
-simpleRef name = RefExpr $ Ref name
+simpleRef name = RefExpr $ Ref name UnknownType

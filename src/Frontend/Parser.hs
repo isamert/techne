@@ -96,8 +96,9 @@ typeconst = TypeConstraint <$> typeparamIdent
 -- ----------------------------------------------------------------------------
 -- Primitives
 -- ----------------------------------------------------------------------------
+-- TODO: forced types?, like a(x : Int, 3)
 ref :: TParser Ref
-ref = Ref <$> identifier
+ref = flip Ref UnknownType <$> identifier
       <|> PlaceHolder <$> (char '$' >> integer)
 
 tuple :: TParser a -> TParser (Tuple a)
