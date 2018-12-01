@@ -72,12 +72,14 @@ constraintsWithArrow = do
     return cnsts
 
 pattern_ :: TParser Pattern
-pattern_ = LitPattern <$> lit
-    <|> RegexPattern <$> regexLit
-    <|> try unpackPattern
-    <|> BindPattern <$> identifier
-    where unpackPattern =
-            liftM2 UnpackPattern identifier $ tuple pattern_
+pattern_ = do
+    bind <- try (Just <$> identifier <* symbol "@") <|> return Nothing
+    fmap (LitPattern bind) lit
+      <|> fmap (RegexPattern bind) regexLit
+      <|> try (liftM2 (UnpackPattern bind) identifier (tuple pattern_))
+      <|> case bind of
+            Just _  -> fail "Cannot bind pattern to itself"
+            Nothing -> BindPattern <$> identifier
 
 -- | Parse `a: Type` or `a`. Handles type constraints if given any.
 param :: [Constraint] -> TParser Param
@@ -86,8 +88,9 @@ param cnsts = do
     typ <- optional (colon >> typeWithConstraints cnsts)
     return $ Param pattrn (fromMaybe UnknownType typ)
 
+-- TODO: check for name conflicts
 params :: [Constraint] -> TParser [Param]
-params  cnsts = param cnsts `sepBy`  comma
+params cnsts = param cnsts `sepBy` comma
 
 -- Parse a type parameter, or as I recently taken call type constraint
 typeconst :: TParser Constraint

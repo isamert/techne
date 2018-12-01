@@ -5,7 +5,6 @@ import Frontend
 import Frontend.AST
 import Frontend.Parser
 
-
 import Data.Generics.Uniplate.Data
 import Data.Data (Data)
 

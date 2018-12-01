@@ -16,6 +16,7 @@ module Frontend
     -- Helpers
     , testParser
     , tparse
+    , gparse
     ) where
 
 import TechnePrelude
@@ -64,3 +65,4 @@ getFnReturnType fnname = (lastSafe =<<) <$> getFnSignature fnname
 -- ----------------------------------------------------------------------------
 testParser p = parseTest (runStateT p initTState)
 tparse p = parse (runStateT p initTState)
+gparse p input = fst . fromRight' $ parse (runStateT p initTState) "Test" input

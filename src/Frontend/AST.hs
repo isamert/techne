@@ -26,7 +26,7 @@ data Expr
                  , binExprLeft  :: Expr
                  , binExprRight :: Expr }
     | Wrapper Expr
-    deriving (Eq, Show, Data, Typeable)
+    deriving (Show, Eq, Data, Typeable)
 
 -- ----------------------------------------------------------------------------
 -- Parameters and related stuff
@@ -34,58 +34,62 @@ data Expr
 data Constraint
     = ConceptConstraint Name ConceptName -- A a => a
     | TypeConstraint Name                -- concept X of a
-    deriving (Eq, Show, Data, Typeable)
+    deriving (Show, Eq, Data, Typeable)
 
 data Param
     = Param Pattern Type
     | DataParam Name Type
-    deriving (Eq, Data, Typeable)
+    deriving (Show, Eq, Data, Typeable)
 
 data Ref
-    = Ref Name Type       -- a
+    = Ref { refName :: Name, refType :: Type }  -- a
     | PlaceHolder Integer -- "$1"
-    deriving (Eq, Show, Data, Typeable)
+    deriving (Show, Eq, Ord, Data, Typeable)
 
 -- ----------------------------------------------------------------------------
 -- Module related stuff
 -- ----------------------------------------------------------------------------
 data Import = Import [Path] [Name] -- from Some.Module use Foo, Bar;
-    deriving (Eq, Show, Data, Typeable)
+    deriving (Show, Eq, Data, Typeable)
 
 data Module = Module [Import] [Decl]
-    deriving (Eq, Data, Typeable)
+    deriving (Show, Eq, Data, Typeable)
 
 data Type
     = ConcreteType Name           -- Int
     | PolyType Name [ConceptName] -- `Show a => a` => PolyType a ["Show"]
     | ConstraintType Name         -- concept X of a reqs f : a -> a => `a` is ContraintType
     | UnknownType                 -- Used as placeholder while parsing.
-    deriving (Eq, Data, Typeable)
+    deriving (Show, Eq, Ord, Data, Typeable)
 
 data Pattern
-    = BindPattern Name                   -- a
-    | LitPattern Lit                     -- 3, "asd" etc.
-    | RegexPattern Text                  -- `$[a-d]^`
-    | UnpackPattern Name (Tuple Pattern) -- A(3, b) where A is a data
-    deriving (Eq, Data, Typeable)
+    = BindPattern   Name                            -- a
+    | LitPattern    { ptrnName :: Maybe Name
+                    , ptrnLit :: Lit }              -- 3, "asd" etc.
+    | RegexPattern  { ptrnName :: Maybe Name
+                    , ptrnRegex :: Text }           -- `$[a-d]^`
+    | UnpackPattern { ptrnName :: Maybe Name
+                    , ptrnDataName :: Name
+                    , ptrnPack :: Tuple Pattern } -- A(3, b) where A is a data
+    deriving (Show, Eq, Data, Typeable)
 
 data Impl
     = Impl ConceptName DataName [Fn]
-    deriving (Eq, Show, Data, Typeable)
+    deriving (Show, Eq, Data, Typeable)
 
 data Concept
     = Concept Constraint [FnDef]
-    deriving (Eq, Show, Data, Typeable)
+    deriving (Show, Eq, Data, Typeable)
 
 -- Represents a sum type. If data has only one product type then think like
 -- it's just a product type.
 newtype Dat = Dat [(Name, [Param])]
-    deriving (Eq, Data, Typeable)
+    deriving (Show, Eq, Data, Typeable)
 
 data FnDef
     = FnDef { fnDefName :: Name
             , fnDefSignature :: FnSignature
-            } deriving (Eq,Show, Data, Typeable)
+            } deriving (Show, Eq, Data, Typeable)
 
 -- | Top-level declarations
 data Decl
@@ -93,7 +97,7 @@ data Decl
     | DataDecl Dat
     | ConceptDecl Concept
     | ImplDecl Impl
-    deriving (Eq, Show, Data, Typeable)
+    deriving (Show, Eq, Data, Typeable)
 
 -- ----------------------------------------------------------------------------
 -- Primitives
@@ -104,20 +108,20 @@ data Lit
     | Int  Integer
     | Flt  Double
     | Frac Rational
-    deriving (Eq, Typeable, Data)
+    deriving (Show, Eq, Typeable, Data)
 
 newtype Tuple a
    = Tuple { tupleElems :: [TupleElem a] }
-    deriving (Eq, Functor, Semigroup, Monoid, Data, Typeable)
+    deriving (Show, Eq, Functor, Semigroup, Monoid, Data, Typeable)
 
 data TupleElem a
     = IndexedTElem a
     | NamedTElem Name a
-    deriving (Eq, Functor, Data, Typeable)
+    deriving (Show, Eq, Functor, Data, Typeable)
 
 newtype List a
     = List [a]
-    deriving (Eq, Functor, Semigroup, Monoid, Data, Typeable)
+    deriving (Show, Eq, Functor, Semigroup, Monoid, Data, Typeable)
 
 data BinOp
     = Add
@@ -125,30 +129,31 @@ data BinOp
     | Mult
     | Div
     | Op Name
-    deriving (Eq, Data, Typeable)
+    deriving (Show, Eq, Data, Typeable)
 
 data Fn
     = Fn { fnParams :: [Param]
          , fnReturnType :: Type
          , fnBody :: Expr
          , fnScope :: [Decl] -- where clause
-         } deriving (Eq, Data, Typeable)
+         } deriving (Show, Eq, Data, Typeable)
 
 -- ----------------------------------------------------------------------------
 -- Show instances
 -- ----------------------------------------------------------------------------
--- instance Show Expr where
-    -- show (IfExpr (c,t) _ els) = "if " ++ show c
+{-
+instance Show Expr where
+    show (IfExpr (c,t) _ els) = "if " ++ show c
                                 -- ++ " then " ++ show t
                                 -- ++ " else " ++ show els
-    --show (WhenExpr _ _) = undefined
-    --show (LitExpr lit) = show lit
-    --show (ListExpr list) = show list
-    --show (TupleExpr tuple) = show tuple
-    --show (FnExpr fn) = show fn
-    --show (RefExpr name) = tunpack name
-    --show (BinExpr op left right) = show left ++ " " ++ show op ++ " " ++ show right
-    --show (FnApplExpr name tuple) = show name ++ show tuple
+    show (WhenExpr _ _) = undefined
+    show (LitExpr lit) = show lit
+    show (ListExpr list) = show list
+    show (TupleExpr tuple) = show tuple
+    show (FnExpr fn) = show fn
+    show (RefExpr name) = tunpack name
+    show (BinExpr op left right) = show left ++ " " ++ show op ++ " " ++ show right
+    show (FnApplExpr name tuple) = show name ++ show tuple
 
 instance Show Module where
     show (Module is as) = tie show "\n" is ++ tie show "\n" as
@@ -211,7 +216,7 @@ instance Show Type where
     show (PolyType name concepts) = tunpack name ++ "!"
     show (ConstraintType name)    = tunpack name ++ "!!"
     show UnknownType              = "??"
-
+-}
 -- ----------------------------------------------------------------------------
 -- Other instances
 -- ----------------------------------------------------------------------------
@@ -219,10 +224,6 @@ instance Semigroup Expr where
     (TupleExpr e1) <> (TupleExpr e2) = TupleExpr (e1 <> e2)
     (ListExpr  e1) <> (ListExpr  e2) = ListExpr  (e1 <> e2)
     e1 <> e2  = error ("Illegal call: " ++ show e1 ++ " <> " ++ show e2)
-
-instance Ord Ref where
-    compare (PlaceHolder x) (PlaceHolder y) = compare x y
-    compare _ _ = EQ
 
 -- ----------------------------------------------------------------------------
 -- Utility functions
