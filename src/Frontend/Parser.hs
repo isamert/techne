@@ -6,14 +6,128 @@ module Frontend.Parser
 
 import TechnePrelude
 import Frontend
-import Frontend.Lexer
 import Frontend.AST
 
 import Text.Megaparsec
 import Text.Megaparsec.Char
 import Control.Monad.Combinators.Expr
+import qualified Text.Megaparsec.Char.Lexer as L
 import qualified Data.Set as Set
 
+-- ----------------------------------------------------------------------------
+-- Lexer
+-- ----------------------------------------------------------------------------
+spaceConsumer :: TParser ()
+spaceConsumer = L.space space1 lineComment blockComment
+    where lineComment = L.skipLineComment "#"
+          blockComment = L.skipBlockCommentNested "#>" "<#" -- TODO: also allow #< ># ?
+                                                            -- #< ># is normal comment, #> <# is doc commen
+-- | After every lexeme, whitespace will be consumed automatically.
+lexeme = L.lexeme spaceConsumer
+
+-- | A constant symbol.
+-- Check out 'comma', 'semicolon', 'parens' etc.
+-- This is case-sensetive. (L.symbol' is case-insensetive version.)
+symbol :: Text -> TParser Text
+symbol = L.symbol spaceConsumer
+
+--
+-- Literals
+--
+newLine   = symbol "\n"
+semicolon = symbol ";"
+comma     = symbol ","
+colon     = symbol ":"
+dot       = symbol "."
+bar       = symbol "|"
+lparen    = symbol "("
+rparen    = symbol ")"
+lbrace    = symbol "{"
+rbrace    = symbol "}"
+langle    = symbol "<"
+rangle    = symbol ">"
+lbracket  = symbol "["
+rbracket  = symbol "]"
+equal     = symbol "="
+tilde     = symbol "~"
+
+parens    = between lparen rparen
+braces    = between lbrace rbrace
+angles    = between langle rangle
+brackets  = between lbracket rbracket
+
+-- | A string literal, like "Hey, I'm a string literal"
+-- Respects the escape sequences.
+stringLit :: TParser Text
+stringLit = lexeme $ tpack <$> (char '"' >> manyTill L.charLiteral (char '"')) -- FIXME: pack?
+
+-- | A char literal, like 'a' or '\n'
+-- Respects the escape sequences.
+charLit :: TParser Char
+charLit = lexeme $ char '\'' >> L.charLiteral <* char '\''
+
+-- | A regex literal (used as pattern generally), like `$[a-z]^` (acutes
+-- included)
+regexLit :: TParser Text
+regexLit = lexeme $ tpack <$> (char '`' >> manyTill L.charLiteral (char '`'))
+
+float         = lexeme L.float
+integer       = lexeme L.decimal
+signedFloat   = L.signed spaceConsumer float
+signedInteger = L.signed spaceConsumer integer
+
+-- TODO: needs to be updated
+rwords :: [Text]
+rwords = ["if", "then", "else", "elif", "skip", "return", "and", "is",
+                 "or", "while", "when", "use", "from", "data"]
+
+-- | Parses given reserved word.
+-- rword "if"
+rword :: Text -> TParser ()
+rword w = (lexeme . try) (string w >> notFollowedBy alphaNumChar)
+
+wFn = void (rword "fn") <|> void (symbol "λ")
+wArrow = symbol "->" <|> symbol "→"
+
+-- FIXME: needs better definition
+identifier :: TParser Text
+identifier = lexeme $ try (tpack <$> some alphaNumChar >>= check)
+    where check w
+            | w `elem` rwords = fail $ show w ++ " is a keyword and cannot be an identifier."
+            | otherwise = return w
+
+upcaseIdent :: TParser Text
+upcaseIdent = lexeme . try $ liftM2 tcons upperChar identifier
+
+lowcaseIdent :: TParser Text
+lowcaseIdent = lexeme . try $ liftM2 tcons lowerChar identifier
+
+-- FIXME: needs better definition
+infixIdent :: TParser Text
+infixIdent = lexeme . try $ do
+    c1 <- oneOf infixStarters
+    c2 <- oneOf infixChars
+    c3 <- many $ oneOf infixChars
+    return $ tpack (c1 : c2 : c3)
+    where infixChars = "-=_?+*/&^%$!@<>:|" :: String
+          infixStarters = tail infixChars
+
+-- | A generic parameter identifier like ~a.
+genericIdent :: TParser Text
+genericIdent = lexeme . try $ char '~' >> identifier
+
+dataIdent :: TParser Text
+dataIdent = upcaseIdent
+
+conceptIdent :: TParser Text
+conceptIdent = upcaseIdent
+
+typeparamIdent :: TParser Text
+typeparamIdent = lowcaseIdent
+
+-- ----------------------------------------------------------------------------
+-- Parsers (from here to end of the file)
+-- ----------------------------------------------------------------------------
 module_ :: TParser Module
 module_ = do
     imports <- many import_
@@ -73,15 +187,19 @@ constraintsWithArrow = do
 
 pattern_ :: TParser Pattern
 pattern_ = do
-    bind <- try (Just <$> identifier <* symbol "@") <|> return Nothing
-    fmap (LitPattern bind) lit
-      <|> fmap (RegexPattern bind) regexLit
-      <|> try (liftM2 (UnpackPattern bind) identifier (tuple pattern_))
-      <|> case bind of
+    bindname <- try (Just <$> identifier <* symbol "@") <|> return Nothing
+    ElsePattern  bindname <$ rword "else"
+      <|> RestPattern bindname <$ symbol "..."
+      <|> fmap (LitPattern bindname) lit
+      <|> fmap (RegexPattern bindname) regexLit
+      <|> fmap (TuplePattern bindname) (tuple pattern_)
+      <|> fmap (ListPattern bindname) (list pattern_)
+      <|> try (liftM2 (UnpackPattern bindname) identifier (tuple pattern_))
+      <|> case bindname of
             Just _  -> fail "Cannot bind pattern to itself"
             Nothing -> BindPattern <$> identifier
 
--- | Parse `a: Type` or `a`. Handles type constraints if given any.
+-- | Parse `a: Type` or `a`, or `~a`. Handles type constraints if given any.
 param :: [Constraint] -> TParser Param
 param cnsts = do
     pattrn <- pattern_
@@ -115,19 +233,19 @@ list :: TParser a -> TParser (List a)
 list p = List <$> brackets (p `sepBy` comma)
 
 lit :: TParser Lit
-lit = Str <$> stringLit
-    <|> Chr <$> charLit
-    <|> Flt <$> try signedFloat
-    <|> Int <$> signedInteger
+lit = StrLit <$> stringLit
+    <|> ChrLit <$> charLit
+    <|> FltLit <$> try signedFloat
+    <|> IntLit <$> signedInteger
 
 -- | Parses a lambda function.
 lambda :: TParser Fn
 lambda = do
-    rword "fn" <|> rword "λ"
+    wFn
     prms <- params []
-    rword "->"
+    wArrow
     body <- expr
-    return $ Fn prms UnknownType body []
+    return $ Fn Nothing prms UnknownType body []
 
 fnAppl :: TParser Expr
 fnAppl = liftM2 FnApplExpr
@@ -148,6 +266,7 @@ fnCall = do
           -- These are the terms that does not require parens wrapping
           -- like 1.a() is legal but when ... end.b() is not, it needs parens.
           fnCallTerm = when_
+                       <|> match_
                        <|> if_
                        <|> try fnAppl
                        <|> litExpr
@@ -161,6 +280,7 @@ expr = makeExprParser term ops
 
 term :: TParser Expr
 term = when_
+         <|> match_
          <|> if_
          <|> try fnCall
          <|> try fnAppl
@@ -174,7 +294,7 @@ term = when_
 -- TODO: Create user defined prefix operators.
 -- TODO: Instead of defining precedence rules like haskell, make some chars
 -- define precedence rules. Like if an operator contains : then precedence
--- is 7 etc.
+-- is 7 etc. (crappy idea)
 ops =
     [ [ InfixL (BinExpr Mult <$ symbol "*")
       , InfixL (BinExpr Div  <$ symbol "/") ]
@@ -206,27 +326,33 @@ lambdaExpr = FnExpr <$> lambda
 -- guard or something like that?
 when_ :: TParser Expr
 when_ = do
-    try $ rword "when"
-    predicate <- optional . try $ expr <* rword "is"
-    pairs <- liftM2 (,) expr (symbol "->" >> expr) `sepBy` comma
+    rword "when"
+    predicate <- Just <$> try (expr <* rword "is") <|> return Nothing
+    pairs <- liftM2 (,) expr (wArrow >> expr) `sepBy` comma
     rword "end"
     return $ WhenExpr predicate pairs
 
--- FIXME: `then` looks ugly, find something else
+match_ :: TParser Expr
+match_ = do
+    rword "match"
+    predicate <- expr
+    rword "with"
+    pairs <- liftM2 (,) pattern_ (wArrow >> expr) `sepBy` comma
+    rword "end"
+    return $ MatchExpr predicate pairs
+
+-- FIXME: nested if's need an terminator (like end)
 if_ :: TParser Expr
 if_ = do
-    try $ rword "if"
-    pred <- expr
-    rword "then"
-    true <- expr
+    rword "if"
+    test <- expr
+    true <- rword "then" >> expr
     pairs <- many . try $ do
-        rword "elif"
-        pred <- expr
-        rword "then"
-        true <- expr
+        pred <- rword "elif" >> expr
+        true <- rword "then" >> expr
         return (pred, true)
-    rword "else"
-    IfExpr (pred, true) pairs <$> expr
+    els <- rword "else" >> expr
+    return $ WhenExpr (Just test) ((mkBool True, true) : pairs)
 
 -- ----------------------------------------------------------------------------
 -- Top lvl stuff
@@ -243,7 +369,7 @@ data_ = do
     let cnsts = typecnsts ++ existentialCnsts
     base <- try (parens (dataParams cnsts) <* symbol "=>") <|> return []
     datadefs <- sum cnsts
-    return $ Dat (datadefs `prependBase` base)
+    return $ Dat name (datadefs `prependBase` base)
     where sum     cnsts = product cnsts `sepBy1` bar
           product cnsts = liftM2 (,)
               identifier
@@ -287,8 +413,9 @@ fnTop = do
               else return $ zipWith Param pattrns sig
         Nothing -> params []
     equal
-    liftM3 (Fn params)
-           (fromMaybe UnknownType <$> getFnReturnType name) expr where_
+    liftM3 (Fn (Just name) params)
+           (fromMaybe UnknownType <$> getFnReturnType name)
+           expr where_
     where where_ = (rword "where" >> decl `sepBy` comma) <|> return []
 
 fnDefWithConstraints :: [Constraint] -> TParser FnDef
@@ -296,7 +423,7 @@ fnDefWithConstraints constraints = do
     fnname <- try $ identifier <* colon
     lclCnsts <- constraintsWithArrow
     let cnsts = constraints ++ lclCnsts
-    types <- typeWithConstraints cnsts `sepBy1` symbol "->"
+    types <- typeWithConstraints cnsts `sepBy1` wArrow
     eol <|> semicolon
     let fndef = FnDef fnname types
     return fndef

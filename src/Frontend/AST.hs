@@ -2,30 +2,35 @@
 module Frontend.AST where
 
 import TechnePrelude
+
 import Data.Data
+import qualified Data.Map as Map
 
 -- Some types for clarification
 type Name        = Text
 type Path        = Text
 type ConceptName = Text
 type DataName    = Text
-type FnSignature = [Type] -- a: Int, b: String
+type FnSignature = [Type]
 
 data Expr
-    = IfExpr     (Expr, Expr) [(Expr, Expr)] Expr -- if EXPR then EXPR (elif EXPR then EXPR)... else EXPR
-    | WhenExpr   (Maybe Expr) [(Expr, Expr)]      -- when [EXPR is] (EXPR -> EXPR)...
-    | FnApplExpr { fnApplName :: Name
+    = WhenExpr   { whenTest  :: Maybe Expr
+                 , whenCases :: [(Expr, Expr)]
+                 }
+    | MatchExpr  { matchTest  :: Expr
+                 , matchCases :: [(Pattern, Expr)]
+                 }
+    | FnApplExpr { fnApplName  :: Name
                  , fnApplTuple :: Tuple Expr
                  }
     | LitExpr    Lit
     | ListExpr   (List Expr)
     | TupleExpr  (Tuple Expr)
     | FnExpr     Fn
-    | RefExpr    Ref                             -- a
+    | RefExpr    Ref
     | BinExpr    { binExprOp    :: BinOp
                  , binExprLeft  :: Expr
                  , binExprRight :: Expr }
-    | Wrapper Expr
     deriving (Show, Eq, Data, Typeable)
 
 -- ----------------------------------------------------------------------------
@@ -46,6 +51,23 @@ data Ref
     | PlaceHolder Integer -- "$1"
     deriving (Show, Eq, Ord, Data, Typeable)
 
+data Pattern
+    = BindPattern   Name                              -- a
+    | ElsePattern   { ptrnName     :: Maybe Name }    -- else ->
+    | RestPattern   { ptrnName     :: Maybe Name }    -- ...
+    | LitPattern    { ptrnName     :: Maybe Name
+                    , ptrnLit      :: Lit }           -- 3, "asd" etc.
+    | RegexPattern  { ptrnName     :: Maybe Name
+                    , ptrnRegex    :: Text }          -- `$[a-d]^`
+    | TuplePattern  { ptrnName     :: Maybe Name
+                    , ptrnTuple    :: Tuple Pattern }
+    | ListPattern   { ptrnName     :: Maybe Name
+                    , ptrnList     :: List Pattern }
+    | UnpackPattern { ptrnName     :: Maybe Name
+                    , ptrnDataName :: Name
+                    , ptrnPack     :: Tuple Pattern } -- A(3, b) where A is a data
+    deriving (Show, Eq, Data, Typeable)
+
 -- ----------------------------------------------------------------------------
 -- Module related stuff
 -- ----------------------------------------------------------------------------
@@ -62,17 +84,6 @@ data Type
     | UnknownType                 -- Used as placeholder while parsing.
     deriving (Show, Eq, Ord, Data, Typeable)
 
-data Pattern
-    = BindPattern   Name                            -- a
-    | LitPattern    { ptrnName :: Maybe Name
-                    , ptrnLit :: Lit }              -- 3, "asd" etc.
-    | RegexPattern  { ptrnName :: Maybe Name
-                    , ptrnRegex :: Text }           -- `$[a-d]^`
-    | UnpackPattern { ptrnName :: Maybe Name
-                    , ptrnDataName :: Name
-                    , ptrnPack :: Tuple Pattern } -- A(3, b) where A is a data
-    deriving (Show, Eq, Data, Typeable)
-
 data Impl
     = Impl ConceptName DataName [Fn]
     deriving (Show, Eq, Data, Typeable)
@@ -83,7 +94,7 @@ data Concept
 
 -- Represents a sum type. If data has only one product type then think like
 -- it's just a product type.
-newtype Dat = Dat [(Name, [Param])]
+data Dat = Dat Name [(Name, [Param])] -- Dat DataTypeName [(DataName, [Param])]
     deriving (Show, Eq, Data, Typeable)
 
 data FnDef
@@ -93,21 +104,22 @@ data FnDef
 
 -- | Top-level declarations
 data Decl
-    = FnDecl Fn
-    | DataDecl Dat
+    = FnDecl      Fn
+    | DataDecl    Dat
     | ConceptDecl Concept
-    | ImplDecl Impl
+    | ImplDecl    Impl
     deriving (Show, Eq, Data, Typeable)
 
 -- ----------------------------------------------------------------------------
 -- Primitives
 -- ----------------------------------------------------------------------------
 data Lit
-    = Chr  Char
-    | Str  Text
-    | Int  Integer
-    | Flt  Double
-    | Frac Rational
+    = ChrLit  Char
+    | StrLit  Text
+    | IntLit  Integer
+    | FltLit  Double
+    | FracLit Rational
+    | BoolLit Bool
     deriving (Show, Eq, Typeable, Data)
 
 newtype Tuple a
@@ -132,10 +144,11 @@ data BinOp
     deriving (Show, Eq, Data, Typeable)
 
 data Fn
-    = Fn { fnParams :: [Param]
+    = Fn { fnName       :: Maybe Name
+         , fnParams     :: [Param]
          , fnReturnType :: Type
-         , fnBody :: Expr
-         , fnScope :: [Decl] -- where clause
+         , fnBody       :: Expr
+         , fnScope      :: [Decl] -- where clause
          } deriving (Show, Eq, Data, Typeable)
 
 -- ----------------------------------------------------------------------------
@@ -226,7 +239,7 @@ instance Semigroup Expr where
     e1 <> e2  = error ("Illegal call: " ++ show e1 ++ " <> " ++ show e2)
 
 -- ----------------------------------------------------------------------------
--- Utility functions
+-- utility functions
 -- ----------------------------------------------------------------------------
 isBindPattern (BindPattern _ ) = True
 
@@ -238,5 +251,9 @@ lookupConstraints typ =
 prependTuple tuple elem = Tuple (elem : tupleElems tuple)
 prependFnAppl fnAppl expr = fnAppl { fnApplTuple = fnApplTuple fnAppl `prependTuple` expr }
 
-simpleParam name = Param (BindPattern name)
-simpleRef name = RefExpr $ Ref name UnknownType
+-- ----------------------------------------------------------------------------
+-- mk/mks (s for simple) (These are generally for expressions)
+-- ----------------------------------------------------------------------------
+mksParam name = Param (BindPattern name)
+mksRef name = RefExpr $ Ref name UnknownType
+mkBool x = LitExpr (BoolLit x)

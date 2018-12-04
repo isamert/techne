@@ -31,7 +31,6 @@ phToFn f expr = phToFn' $ collectPHs expr
           collectPHs expr = [ph | (RefExpr ph@(PlaceHolder _)) <- f expr]
 
 -- TODO: rename RefExpr immediadetly
-exprPHtoFn e@IfExpr{}     = phToFnChildren e
 exprPHtoFn e@ListExpr{}   = phToFnChildren e
 exprPHtoFn e@WhenExpr{}   = phToFnChildren e
 exprPHtoFn e@TupleExpr{}  = phToFnChildren e
@@ -57,7 +56,7 @@ binExprPHtoFn x = descend binExprPHtoFn x
 -- ----------------------------------------------------------------------------
 -- | Turn a PlaceHolder into a Param.
 phToParam :: Ref -> Param
-phToParam (PlaceHolder n) = simpleParam ("$" ++ tshow n) UnknownType
+phToParam (PlaceHolder n) = mksParam ("$" ++ tshow n) UnknownType
 phToParam _ = error "This shouldn't have happened"
 
 mkLambda :: [Param] -> Expr -> Expr
