@@ -1,23 +1,75 @@
 module Frontend.Parser
-    ( module_
+    ( -- Re-exports
+    runStateT
+    , get
+    , put
+    -- Types
+    , ParserS (..)
+    , ParserM (..)
+    , ParserE (..)
+    -- State related
+    , initParserS
+    -- Parsers
+    , module_
     , expr
-    , decl
     ) where
 
 import TechnePrelude
-import Frontend
 import Frontend.AST
 
+import Data.Void (Void)
 import Text.Megaparsec
 import Text.Megaparsec.Char
+import Control.Monad.State.Lazy (StateT, runStateT, get, put)
 import Control.Monad.Combinators.Expr
 import qualified Text.Megaparsec.Char.Lexer as L
 import qualified Data.Set as Set
 
 -- ----------------------------------------------------------------------------
+-- Types
+-- ----------------------------------------------------------------------------
+newtype ParserS = ParserS { stateFnDefs :: [FnDef] } deriving (Show, Eq)
+type ParserM a  = StateT ParserS (Parsec Void Text) a
+type ParserE    = ParseErrorBundle Text Void
+
+-- ----------------------------------------------------------------------------
+-- State related functions
+-- ----------------------------------------------------------------------------
+initParserS = ParserS []
+
+hasFn :: Name -> ParserM Bool
+hasFn fnname = do
+    state <- get
+    return $ fnname `elem` map fnDefName (stateFnDefs state)
+
+-- | Add `def` to function definitions of ParserS
+updateFnDefs :: FnDef -> ParserM ()
+updateFnDefs def = do
+    hasFn <- hasFn (fnDefName def)
+    when hasFn (fail "More than one definition for same function.")
+    state <- get
+    void . put $ state { stateFnDefs = def : stateFnDefs state }
+
+getFnSignature :: Name -> ParserM (Maybe FnSignature)
+getFnSignature fnname = do
+    state <- get
+    return $ fmap fnDefSignature . headSafe . filter
+      (\(FnDef name sig) -> name == fnname) $ stateFnDefs state
+
+getFnReturnType :: Name -> ParserM (Maybe Type)
+getFnReturnType fnname = (lastSafe =<<) <$> getFnSignature fnname
+
+-- ----------------------------------------------------------------------------
+-- Helper functions
+-- ----------------------------------------------------------------------------
+testParser p = parseTest (runStateT p initParserS)
+tparse p = parse (runStateT p initParserS)
+gparse p input = fst . fromRight' $ parse (runStateT p initParserS) "Test" input
+
+-- ----------------------------------------------------------------------------
 -- Lexer
 -- ----------------------------------------------------------------------------
-spaceConsumer :: TParser ()
+spaceConsumer :: ParserM ()
 spaceConsumer = L.space space1 lineComment blockComment
     where lineComment = L.skipLineComment "#"
           blockComment = L.skipBlockCommentNested "#>" "<#" -- TODO: also allow #< ># ?
@@ -28,7 +80,7 @@ lexeme = L.lexeme spaceConsumer
 -- | A constant symbol.
 -- Check out 'comma', 'semicolon', 'parens' etc.
 -- This is case-sensetive. (L.symbol' is case-insensetive version.)
-symbol :: Text -> TParser Text
+symbol :: Text -> ParserM Text
 symbol = L.symbol spaceConsumer
 
 --
@@ -58,17 +110,17 @@ brackets  = between lbracket rbracket
 
 -- | A string literal, like "Hey, I'm a string literal"
 -- Respects the escape sequences.
-stringLit :: TParser Text
+stringLit :: ParserM Text
 stringLit = lexeme $ tpack <$> (char '"' >> manyTill L.charLiteral (char '"')) -- FIXME: pack?
 
 -- | A char literal, like 'a' or '\n'
 -- Respects the escape sequences.
-charLit :: TParser Char
+charLit :: ParserM Char
 charLit = lexeme $ char '\'' >> L.charLiteral <* char '\''
 
 -- | A regex literal (used as pattern generally), like `$[a-z]^` (acutes
 -- included)
-regexLit :: TParser Text
+regexLit :: ParserM Text
 regexLit = lexeme $ tpack <$> (char '`' >> manyTill L.charLiteral (char '`'))
 
 float         = lexeme L.float
@@ -83,27 +135,27 @@ rwords = ["if", "then", "else", "elif", "skip", "return", "and", "is",
 
 -- | Parses given reserved word.
 -- rword "if"
-rword :: Text -> TParser ()
+rword :: Text -> ParserM ()
 rword w = (lexeme . try) (string w >> notFollowedBy alphaNumChar)
 
 wFn = void (rword "fn") <|> void (symbol "λ")
 wArrow = symbol "->" <|> symbol "→"
 
 -- FIXME: needs better definition
-identifier :: TParser Text
+identifier :: ParserM Text
 identifier = lexeme $ try (tpack <$> some alphaNumChar >>= check)
     where check w
             | w `elem` rwords = fail $ show w ++ " is a keyword and cannot be an identifier."
             | otherwise = return w
 
-upcaseIdent :: TParser Text
+upcaseIdent :: ParserM Text
 upcaseIdent = lexeme . try $ liftM2 tcons upperChar identifier
 
-lowcaseIdent :: TParser Text
+lowcaseIdent :: ParserM Text
 lowcaseIdent = lexeme . try $ liftM2 tcons lowerChar identifier
 
 -- FIXME: needs better definition
-infixIdent :: TParser Text
+infixIdent :: ParserM Text
 infixIdent = lexeme . try $ do
     c1 <- oneOf infixStarters
     c2 <- oneOf infixChars
@@ -113,29 +165,29 @@ infixIdent = lexeme . try $ do
           infixStarters = tail infixChars
 
 -- | A generic parameter identifier like ~a.
-genericIdent :: TParser Text
+genericIdent :: ParserM Text
 genericIdent = lexeme . try $ char '~' >> identifier
 
-dataIdent :: TParser Text
+dataIdent :: ParserM Text
 dataIdent = upcaseIdent
 
-conceptIdent :: TParser Text
+conceptIdent :: ParserM Text
 conceptIdent = upcaseIdent
 
-typeparamIdent :: TParser Text
+typeparamIdent :: ParserM Text
 typeparamIdent = lowcaseIdent
 
 -- ----------------------------------------------------------------------------
 -- Parsers (from here to end of the file)
 -- ----------------------------------------------------------------------------
-module_ :: TParser Module
+module_ :: ParserM Module
 module_ = do
     imports <- many import_
     decls <- many (many (fnDef >>= updateFnDefs) >> decl)
     eof
     return $ Module imports decls
 
-import_ :: TParser Import
+import_ :: ParserM Import
 import_ = do
     rword "from"
     path <- identifier `sepBy1` dot
@@ -144,7 +196,7 @@ import_ = do
     semicolon
     return $ Import path endpoint
 
-decl :: TParser Decl
+decl :: ParserM Decl
 decl = FnDecl <$> fnTop
          <|> DataDecl <$> data_
          <|> ConceptDecl <$> concept
@@ -153,7 +205,7 @@ decl = FnDecl <$> fnTop
 -- ----------------------------------------------------------------------------
 -- Helpers
 -- ----------------------------------------------------------------------------
-typeWithConstraints :: [Constraint] -> TParser Type
+typeWithConstraints :: [Constraint] -> ParserM Type
 typeWithConstraints cnsts =
     (flip PolyType [] <$> genericIdent) <|> do
         tname <- identifier
@@ -166,7 +218,7 @@ typeWithConstraints cnsts =
                    TypeConstraint _ -> fail "A type constraint cannot appear here.") xs
 
 -- | Parse `A a`, return (a, A)
-constraint :: TParser Constraint
+constraint :: ParserM Constraint
 constraint = do
     concept <- identifier
     name <- identifier
@@ -174,18 +226,18 @@ constraint = do
 
 -- | Parse `A a, B b, C c`
 -- | returns [(a, A), (b, B)]
-constraints :: TParser [Constraint]
+constraints :: ParserM [Constraint]
 constraints  = constraint `sepBy`  comma
 constraints1 = constraint `sepBy1` comma
 
 -- | Parse `A a, B b, C c =>`
-constraintsWithArrow :: TParser [Constraint]
+constraintsWithArrow :: ParserM [Constraint]
 constraintsWithArrow = do
     cnsts <- try constraints <|> return []
     unless (null cnsts) $ void (symbol "=>")
     return cnsts
 
-pattern_ :: TParser Pattern
+pattern_ :: ParserM Pattern
 pattern_ = do
     bindname <- try (Just <$> identifier <* symbol "@") <|> return Nothing
     ElsePattern  bindname <$ rword "else"
@@ -200,46 +252,46 @@ pattern_ = do
             Nothing -> BindPattern <$> identifier
 
 -- | Parse `a: Type` or `a`, or `~a`. Handles type constraints if given any.
-param :: [Constraint] -> TParser Param
+param :: [Constraint] -> ParserM Param
 param cnsts = do
     pattrn <- pattern_
     typ <- optional (colon >> typeWithConstraints cnsts)
     return $ Param pattrn (fromMaybe UnknownType typ)
 
 -- TODO: check for name conflicts
-params :: [Constraint] -> TParser [Param]
+params :: [Constraint] -> ParserM [Param]
 params cnsts = param cnsts `sepBy` comma
 
 -- Parse a type parameter, or as I recently taken call type constraint
-typeconst :: TParser Constraint
+typeconst :: ParserM Constraint
 typeconst = TypeConstraint <$> typeparamIdent
 
 -- ----------------------------------------------------------------------------
 -- Primitives
 -- ----------------------------------------------------------------------------
 -- TODO: forced types?, like a(x : Int, 3)
-ref :: TParser Ref
+ref :: ParserM Ref
 ref = flip Ref UnknownType <$> identifier
       <|> PlaceHolder <$> (char '$' >> integer)
 
-tuple :: TParser a -> TParser (Tuple a)
+tuple :: ParserM a -> ParserM (Tuple a)
 tuple p = Tuple <$> parens (tupElem `sepBy` comma)
     where tupElem = do ident <- optional $ try (identifier <* equal)
                        case ident of
                          Just id -> NamedTElem id <$> p
                          Nothing -> IndexedTElem <$> p
 
-list :: TParser a -> TParser (List a)
+list :: ParserM a -> ParserM (List a)
 list p = List <$> brackets (p `sepBy` comma)
 
-lit :: TParser Lit
+lit :: ParserM Lit
 lit = StrLit <$> stringLit
     <|> ChrLit <$> charLit
     <|> FltLit <$> try signedFloat
     <|> IntLit <$> signedInteger
 
 -- | Parses a lambda function.
-lambda :: TParser Fn
+lambda :: ParserM Fn
 lambda = do
     wFn
     prms <- params []
@@ -247,14 +299,14 @@ lambda = do
     body <- expr
     return $ Fn Nothing prms UnknownType body []
 
-fnAppl :: TParser Expr
+fnAppl :: ParserM Expr
 fnAppl = liftM2 FnApplExpr
                 identifier
                 (tuple expr)
 
 -- FIXME: (1,2).a() is turned into a(1,2). What if a takes (Int, Int) tuple as
 -- arg? (btw a((1,2)) works fine)
-fnCall :: TParser Expr
+fnCall :: ParserM Expr
 fnCall = do
     first <- try (parens expr) <|> fnCallTerm
     dot
@@ -275,10 +327,10 @@ fnCall = do
                        <|> lambdaExpr
                        <|> refExpr
 
-expr :: TParser Expr
+expr :: ParserM Expr
 expr = makeExprParser term ops
 
-term :: TParser Expr
+term :: ParserM Expr
 term = when_
          <|> match_
          <|> if_
@@ -306,25 +358,25 @@ ops =
 -- ----------------------------------------------------------------------------
 -- Local exprs
 -- ----------------------------------------------------------------------------
-refExpr :: TParser Expr
+refExpr :: ParserM Expr
 refExpr = RefExpr <$> ref
 
-tupleExpr :: TParser Expr
+tupleExpr :: ParserM Expr
 tupleExpr = TupleExpr <$> tuple expr
 
-listExpr :: TParser Expr
+listExpr :: ParserM Expr
 listExpr = ListExpr <$> list expr
 
-litExpr :: TParser Expr
+litExpr :: ParserM Expr
 litExpr = LitExpr <$> lit
 
-lambdaExpr :: TParser Expr
+lambdaExpr :: ParserM Expr
 lambdaExpr = FnExpr <$> lambda
 
 -- FIXME: RHS of the `->` should be a pattern.
 -- What about bools? Should I accept them directly or do they need an extra
 -- guard or something like that?
-when_ :: TParser Expr
+when_ :: ParserM Expr
 when_ = do
     rword "when"
     predicate <- Just <$> try (expr <* rword "is") <|> return Nothing
@@ -332,7 +384,7 @@ when_ = do
     rword "end"
     return $ WhenExpr predicate pairs
 
-match_ :: TParser Expr
+match_ :: ParserM Expr
 match_ = do
     rword "match"
     predicate <- expr
@@ -342,7 +394,7 @@ match_ = do
     return $ MatchExpr predicate pairs
 
 -- FIXME: nested if's need an terminator (like end)
-if_ :: TParser Expr
+if_ :: ParserM Expr
 if_ = do
     rword "if"
     test <- expr
@@ -359,7 +411,7 @@ if_ = do
 -- ----------------------------------------------------------------------------
 -- TODO: if it's a product type with no name, gave type const.'s name
 -- FIXME: find a better syntax for existentialCnsts
-data_ :: TParser Dat
+data_ :: ParserM Dat
 data_ = do
     rword "data"
     name <- dataIdent
@@ -383,7 +435,7 @@ data_ = do
 
 -- TODO: add default impls (maybe using def/default keyword)
 -- fnDefs
-concept :: TParser Concept
+concept :: ParserM Concept
 concept = do
     rword "concept"
     name <- conceptIdent
@@ -393,7 +445,7 @@ concept = do
                     >> fnDefWithConstraints [tcnst])
     return $ Concept tcnst reqs
 
-impl :: TParser Impl
+impl :: ParserM Impl
 impl = do
     rword "impl"
     cname <- dataIdent
@@ -402,7 +454,7 @@ impl = do
     fns <- many (rword "impls" >> fnTop) -- FIXME: better keyword pls
     return $ Impl cname dname fns
 
-fnTop :: TParser Fn
+fnTop :: ParserM Fn
 fnTop = do
     name <- identifier
     params <- getFnSignature name >>= \case
@@ -418,7 +470,7 @@ fnTop = do
            expr where_
     where where_ = (rword "where" >> decl `sepBy` comma) <|> return []
 
-fnDefWithConstraints :: [Constraint] -> TParser FnDef
+fnDefWithConstraints :: [Constraint] -> ParserM FnDef
 fnDefWithConstraints constraints = do
     fnname <- try $ identifier <* colon
     lclCnsts <- constraintsWithArrow
@@ -429,5 +481,5 @@ fnDefWithConstraints constraints = do
     return fndef
 
 -- | Parses top-level function definitions like `f : A a => a -> B`.
-fnDef :: TParser FnDef
+fnDef :: ParserM FnDef
 fnDef = fnDefWithConstraints []

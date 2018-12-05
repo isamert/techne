@@ -1,7 +1,6 @@
 module Frontend.Desugar (desugar) where
 
 import TechnePrelude
-import Frontend
 import Frontend.AST
 import Frontend.Parser
 

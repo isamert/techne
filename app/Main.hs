@@ -3,10 +3,9 @@
 module Main where
 
 import TechnePrelude
-import Frontend
 import Frontend.AST
-import qualified Frontend.Parser as P
 import Frontend.Desugar
+import Frontend.Parser
 
 import Text.Megaparsec
 import Text.Megaparsec.Error
@@ -63,21 +62,21 @@ main = runOptions =<< execParser opts
 -- | Do stuff depending on commandline options.
 runOptions :: Options -> IO ()
 runOptions (Options _ output (Just input)) = runInputT defaultSettings $ do
-    result <- parseFromFile (runStateT P.module_ initTState) input
+    result <- parseFromFile (runStateT module_ initParserS) input
     putStrLn $ case result of
       Right a -> tshow a
       Left a -> tpack $ errorBundlePretty a
 
-runOptions (Options True _ _) = runInputT defaultSettings $ repl initTState
+runOptions (Options True _ _) = runInputT defaultSettings $ repl initParserS
 runOptions (Options i outf inf) = putStrLn $ tshow i <> tshow outf <> tshow inf
 
 parseFromFile p file = runParser p file <$> readFile file
 
-repl :: TState -> InputT IO ()
+repl :: ParserS -> InputT IO ()
 repl state = getInputLine "> " >>= \case
     Nothing    -> repl state
     Just ":q"  -> return ()
     Just input -> case pp input of
           Right (x, s) -> outputStrLn (show $ desugar x) <* repl s
           Left y -> outputStrLn (errorBundlePretty y) <* repl state
-    where pp str = parse (runStateT P.expr state) "" (tpack str)
+    where pp str = parse (runStateT expr state) "" (tpack str)

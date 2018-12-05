@@ -1,7 +1,6 @@
 module Frontend.Renamer where
 
 import TechnePrelude
-import Frontend
 import Frontend.AST
 import Frontend.Parser
 
@@ -12,11 +11,11 @@ import Control.Monad.Except
 import qualified Data.Map as Map
 
 type GenName = Text                 -- a generated name
-type GenEnv = Map.Map Name GenName  -- a map from names to generated names
+type GenEnv  = Map.Map Name GenName -- a map from names to generated names
 
-data RState = RState { counter :: Int, currEnv :: GenEnv }
-newtype RError = NotAssigned Text deriving (Show, Eq)
-type RenamerM a = ExceptT RError (State RState) a
+data RenamerS    = RenamerS { counter :: Int, currEnv :: GenEnv }
+newtype RenamerE = NotAssigned Text deriving (Show, Eq)
+type RenamerM a  = ExceptT RenamerE (State RenamerS) a
 
 -- TODO: seems so repetetive but I have no idea about solving it, uniplate
 -- is not helping I believe.
@@ -120,11 +119,11 @@ renameList f (List xs) = List <$> mapM f xs
 -- ----------------------------------------------------------------------------
 -- RenamerM utility
 -- ----------------------------------------------------------------------------
-initRState :: RState
-initRState = RState { counter = 0, currEnv = Map.empty }
+initRenamerS :: RenamerS
+initRenamerS = RenamerS { counter = 0, currEnv = Map.empty }
 
-runRenamer :: RenamerM a -> Either RError a
-runRenamer m = evalState (runExceptT m) initRState
+runRenamer :: RenamerM a -> Either RenamerE a
+runRenamer m = evalState (runExceptT m) initRenamerS
 
 genName :: RenamerM GenName
 genName = do
