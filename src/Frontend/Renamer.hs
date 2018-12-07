@@ -65,7 +65,9 @@ renameExpr (FnExpr fn@Fn {fnParams = params, fnBody = expr, fnScope = scope}) en
             (DataParam name typ) -> flip DataParam typ <$> insertCurrEnv name
             (Param ptrn typ) -> flip Param typ <$> renamePattern ptrn
 
-renameExpr (FnApplExpr name tuple) env = liftM2 FnApplExpr  (renameFreeVar name env) $ renameTuple (`renameExpr` env) tuple
+renameExpr (FnApplExpr name tuple) env =
+    liftM2 FnApplExpr
+           (renameFreeVar name env) $ renameTuple (`renameExpr` env) tuple
 
 renameExpr (MatchExpr test cases) env = do
     t  <- renameExpr test env
@@ -86,9 +88,13 @@ renameExpr (WhenExpr test cases) env = do
             e2 <- renameExpr expr2 env
             return (e1, e2)
 
-renameExpr (BinExpr op right left) env = liftM3 BinExpr (renameBinOp op env) (renameExpr right env) (renameExpr left env)
-    where renameBinOp (Op name) env = Op <$> renameFreeVar name env
-          renameBinOp op        _   = return op
+renameExpr (BinExpr op right left) env = liftM3 BinExpr
+                                                (renameOp op env)
+                                                (renameExpr right env)
+                                                (renameExpr left env)
+renameExpr (UnExpr op operand) env = liftM2 UnExpr
+                                            (renameOp op env)
+                                            (renameExpr operand env)
 renameExpr x _ = return x
 
 -- ----------------------------------------------------------------------------
@@ -100,12 +106,20 @@ renameFreeVar name env =
       Just gname -> return gname
       Nothing    -> throwError (NotAssigned name)
 
+
+renameOp :: Op -> GenEnv -> RenamerM Op
+renameOp (BinOp name) env = BinOp <$> renameFreeVar name env
+renameOp (UnOp  name) env = UnOp <$> renameFreeVar name env
+renameOp op        _   = return op
+
 renamePattern :: Pattern -> RenamerM Pattern
 renamePattern (BindPattern name) = BindPattern <$> insertCurrEnv name
-renamePattern (UnpackPattern name dataname tuple) = UnpackPattern name dataname <$> renameTuple renamePattern tuple
-renamePattern ptrn = case ptrnName ptrn of
-                     Just name -> insertCurrEnv name >>= \genname -> return $ ptrn { ptrnName = Just genname }
-                     Nothing -> return ptrn
+renamePattern (UnpackPattern name dataname tuple) =
+    UnpackPattern name dataname <$> renameTuple renamePattern tuple
+renamePattern ptrn =
+    case ptrnName ptrn of
+      Just name -> insertCurrEnv name >>= \genname -> return $ ptrn { ptrnName = Just genname }
+      Nothing   -> return ptrn
 
 renameTuple :: (a -> RenamerM a) -> Tuple a -> RenamerM (Tuple a)
 renameTuple f (Tuple xs) =

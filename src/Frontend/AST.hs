@@ -28,9 +28,11 @@ data Expr
     | TupleExpr  (Tuple Expr)
     | FnExpr     Fn
     | RefExpr    Ref
-    | BinExpr    { binExprOp    :: BinOp
-                 , binExprLeft  :: Expr
-                 , binExprRight :: Expr }
+    | UnExpr      { unExprOp      :: Op
+                  , unExprOperand :: Expr }
+    | BinExpr     { binExprOp     :: Op
+                  , binExprLeft   :: Expr
+                  , binExprRight  :: Expr }
     deriving (Show, Eq, Data, Typeable)
 
 -- ----------------------------------------------------------------------------
@@ -135,12 +137,13 @@ newtype List a
     = List [a]
     deriving (Show, Eq, Functor, Semigroup, Monoid, Data, Typeable)
 
-data BinOp
+data Op
     = Add
     | Sub
     | Mult
     | Div
-    | Op Name
+    | BinOp { opName :: Name }
+    | UnOp  { opName :: Name }
     deriving (Show, Eq, Data, Typeable)
 
 data Fn
@@ -257,3 +260,12 @@ prependFnAppl fnAppl expr = fnAppl { fnApplTuple = fnApplTuple fnAppl `prependTu
 mksParam name = Param (BindPattern name)
 mksRef name = RefExpr $ Ref name UnknownType
 mkBool x = LitExpr (BoolLit x)
+
+mkLambda :: [Param] -> Expr -> Expr
+mkLambda prms body = FnExpr $
+    Fn { fnName = Nothing
+       , fnParams = prms
+       , fnReturnType = UnknownType
+       , fnBody = body
+       , fnScope = [] }
+

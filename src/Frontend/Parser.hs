@@ -21,7 +21,7 @@ import Data.Void (Void)
 import Text.Megaparsec
 import Text.Megaparsec.Char
 import Control.Monad.State.Lazy (StateT, runStateT, get, gets, put)
-import Control.Monad.Combinators.Expr
+import qualified Control.Monad.Combinators.Expr as E
 import qualified Text.Megaparsec.Char.Lexer as L
 import qualified Data.Set as Set
 
@@ -35,13 +35,6 @@ data ParserS =
 
 type ParserM a  = StateT ParserS (Parsec Void Text) a
 type ParserE    = ParseErrorBundle Text Void
-
-
--- TODO: prefixl, prefixr, suffixl, suffixr
-data Fixity
-    = InfixLeft  { fixityN :: Integer, fixityName :: Name }
-    | InfixRight { fixityN :: Integer, fixityName :: Name }
-    deriving (Show, Eq, Ord)
 
 -- ----------------------------------------------------------------------------
 -- State related functions
@@ -189,10 +182,19 @@ typeparamIdent = lowcaseIdent
 -- ----------------------------------------------------------------------------
 -- Fixity related functions
 -- ----------------------------------------------------------------------------
+data Fixity
+    = InfixL  { fixityN :: Integer, fixityName :: Name }
+    | InfixR  { fixityN :: Integer, fixityName :: Name }
+    | Prefix  { fixityN :: Integer, fixityName :: Name }
+    | Postfix { fixityN :: Integer, fixityName :: Name }
+    deriving (Show, Eq, Ord)
+
 fixity :: ParserM ()
 fixity = do
-    constr <- (rword "infixl" >> return InfixLeft)
-              <|> (rword "infixr" >> return InfixRight)
+    constr <- (rword "infixl" >> return InfixL)
+              <|> (rword "infixr" >> return InfixR)
+              <|> (rword "postfix" >> return Postfix)
+              <|> (rword "prefix" >> return Prefix)
     i <- integer
     when (i < 0 || i > 9) $ fail "Can't do this"
     ops <- infixIdent `sepBy` comma
@@ -202,24 +204,32 @@ fixity = do
     return ()
 
 -- FIXME: I don't understand why type synonyms cannot be used as type parameter
-buildOpTree :: ParserM [[Operator (StateT ParserS (Parsec Void Text)) Expr]]
+buildOpTree :: ParserM [[E.Operator (StateT ParserS (Parsec Void Text)) Expr]]
 buildOpTree =
     reverse . map (map toOperator) . groupBy (\ f1 f2 -> fixityN f1 == fixityN f2) <$>
      sortBy (\ f1 f2 -> fixityN f1 `compare` fixityN f2)
      <$> gets stateFixity
 
-opsym name =
+opsym name def =
   case name of
     "+" -> Add <$ symbol name
     "-" -> Sub <$ symbol name
     "*" -> Sub <$ symbol name
     "/" -> Div <$ symbol name
-    _   -> Op <$> symbol name
+    _   -> def <$> symbol name
 
-infixTerm name = try $ BinExpr <$> opsym name
-toOperator (InfixLeft _ name) = InfixL $ infixTerm name
-toOperator (InfixRight _ name) = InfixR $ infixTerm name
+infixTerm name = try $ BinExpr <$> opsym name BinOp
+unaryTerm name = try $ UnExpr <$> opsym name UnOp
 
+toOperator (InfixL  _ name) = E.InfixL  $ infixTerm name
+toOperator (InfixR  _ name) = E.InfixR  $ infixTerm name
+toOperator (Prefix  _ name) = E.Prefix  $ unaryTerm name
+toOperator (Postfix _ name) = E.Postfix $ unaryTerm name
+
+hasOp :: Name -> ParserM Bool
+hasOp name = do
+    fs <- gets stateFixity
+    return $ any (\f -> name == fixityName f) fs
 -- ----------------------------------------------------------------------------
 -- Parsers (from here to end of the file)
 -- ----------------------------------------------------------------------------
@@ -348,33 +358,26 @@ fnAppl = liftM2 FnApplExpr
                 identifier
                 (tuple expr)
 
--- FIXME: (1,2).a() is turned into a(1,2). What if a takes (Int, Int) tuple as
--- arg? (btw a((1,2)) works fine)
 fnCall :: ParserM Expr
 fnCall = do
     first <- try (parens expr) <|> fnCallTerm
-    dot
-    app <- fnAppl `sepBy` dot
-    return $ foldl concatFn first app
-    where concatFn (TupleExpr tuple) fnappl =
+    pairs <- many $ try (liftM2 (,) (dot <|> oper) fnAppl)
+    return $ foldl concatFn first pairs
+    where concatFn (TupleExpr tuple) (".", fnappl) =
             fnappl { fnApplTuple = tuple <> fnApplTuple fnappl }
-          concatFn b a = a `prependFnAppl` IndexedTElem b
-          -- These are the terms that does not require parens wrapping
-          -- like 1.a() is legal but when ... end.b() is not, it needs parens.
-          fnCallTerm = when_
-                       <|> match_
-                       <|> if_
-                       <|> try fnAppl
-                       <|> litExpr
-                       <|> listExpr
-                       <|> tupleExpr
-                       <|> lambdaExpr
-                       <|> refExpr
+          concatFn expr (".", app) = app `prependFnAppl` IndexedTElem expr
+          concatFn expr (op, app) = FnApplExpr op (Tuple [IndexedTElem expr, IndexedTElem (mkLambda [mksParam "x" UnknownType] (app `prependFnAppl` IndexedTElem (mksRef "x")))])
+          oper = do
+              x <- infixIdent
+              hasop <- hasOp x
+              if hasop
+                 then fail "zaxd"
+                 else return x
 
 expr :: ParserM Expr
 expr = do
     ops <- buildOpTree
-    makeExprParser term ops
+    E.makeExprParser term ops
 
 term :: ParserM Expr
 term = when_
@@ -389,6 +392,16 @@ term = when_
          <|> lambdaExpr
          <|> refExpr
 
+fnCallTerm :: ParserM Expr
+fnCallTerm = when_
+              <|> match_
+              <|> if_
+              <|> try fnAppl
+              <|> litExpr
+              <|> listExpr
+              <|> tupleExpr
+              <|> lambdaExpr
+              <|> refExpr
 -- ----------------------------------------------------------------------------
 -- Local exprs
 -- ----------------------------------------------------------------------------

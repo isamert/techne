@@ -57,10 +57,3 @@ binExprPHtoFn x = descend binExprPHtoFn x
 phToParam :: Ref -> Param
 phToParam (PlaceHolder n) = mksParam ("$" ++ tshow n) UnknownType
 phToParam _ = error "This shouldn't have happened"
-
-mkLambda :: [Param] -> Expr -> Expr
-mkLambda prms body = FnExpr $
-    Fn { fnParams = prms
-       , fnReturnType = UnknownType
-       , fnBody = body
-       , fnScope = [] }
