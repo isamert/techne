@@ -31,7 +31,7 @@ dependencies:
 - containers >= 0.5.11.0
 - HUnit >= 1.6.0.0
 - uniplate >= 1.6.12
-
+- groom >= 0.1.2.1
 
 default-extensions:
 - OverloadedStrings

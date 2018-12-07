@@ -64,11 +64,11 @@ runOptions :: Options -> IO ()
 runOptions (Options _ output (Just input)) = runInputT defaultSettings $ do
     result <- parseFromFile (runStateT module_ initParserS) input
     putStrLn $ case result of
-      Right a -> tshow a
+      Right a -> tgroom a
       Left a -> tpack $ errorBundlePretty a
 
 runOptions (Options True _ _) = runInputT defaultSettings $ repl initParserS
-runOptions (Options i outf inf) = putStrLn $ tshow i <> tshow outf <> tshow inf
+runOptions (Options i outf inf) = putStrLn $ tgroom i <> tgroom outf <> tgroom inf
 
 parseFromFile p file = runParser p file <$> readFile file
 

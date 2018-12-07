@@ -22,11 +22,11 @@ module TechnePrelude
     , tnull
     , tisUpperFirst
     , tcons
+    , tgroom
     -- Safe
     , headSafe
     , lastSafe
     -- Utility
-    , tie
     , fromRight'
     , fromLeft'
     )
@@ -38,6 +38,7 @@ import qualified Data.Char as C
 import Data.Semigroup
 import Data.Maybe (fromJust)
 import Data.Either (fromRight, fromLeft)
+import Text.Groom (groom)
 
 import Debug.Trace (trace, traceId) -- TODO: Remove in production
 
@@ -69,6 +70,9 @@ tnull = T.null
 tisUpperFirst t = not (tnull t) && C.isUpper (T.head t)
 tcons = T.cons
 
+tgroom :: Show a => a -> Text
+tgroom = tpack . groom
+
 -- ----------------------------------------------------------------------------
 -- Safe re-implementations
 -- ----------------------------------------------------------------------------
@@ -81,8 +85,5 @@ lastSafe xs = Just $ last xs
 -- ----------------------------------------------------------------------------
 -- Utility functions
 -- ----------------------------------------------------------------------------
-tie f sep [] = ""
-tie f sep xs = foldr (\x acc -> f x ++ sep ++ acc) "" xs
-
 fromRight' (Right x) = x
 fromLeft' (Left x) = x
