@@ -20,7 +20,7 @@ import Frontend.AST
 import Data.Void (Void)
 import Text.Megaparsec
 import Text.Megaparsec.Char
-import Control.Monad.State.Lazy (StateT, runStateT, get, put)
+import Control.Monad.State.Lazy (StateT, runStateT, get, gets, put)
 import Control.Monad.Combinators.Expr
 import qualified Text.Megaparsec.Char.Lexer as L
 import qualified Data.Set as Set
@@ -28,14 +28,26 @@ import qualified Data.Set as Set
 -- ----------------------------------------------------------------------------
 -- Types
 -- ----------------------------------------------------------------------------
-newtype ParserS = ParserS { stateFnDefs :: [FnDef] } deriving (Show, Eq)
+data ParserS =
+    ParserS  { stateFnDefs :: [FnDef]
+             , stateFixity :: [Fixity]
+             } deriving (Show, Eq)
+
 type ParserM a  = StateT ParserS (Parsec Void Text) a
 type ParserE    = ParseErrorBundle Text Void
+
+
+-- TODO: prefixl, prefixr, suffixl, suffixr
+data Fixity
+    = InfixLeft  { fixityN :: Integer, fixityName :: Name }
+    | InfixRight { fixityN :: Integer, fixityName :: Name }
+    deriving (Show, Eq, Ord)
 
 -- ----------------------------------------------------------------------------
 -- State related functions
 -- ----------------------------------------------------------------------------
-initParserS = ParserS []
+initParserS :: ParserS
+initParserS = ParserS { stateFnDefs = [] , stateFixity = [] }
 
 hasFn :: Name -> ParserM Bool
 hasFn fnname = do
@@ -60,7 +72,7 @@ getFnReturnType :: Name -> ParserM (Maybe Type)
 getFnReturnType fnname = (lastSafe =<<) <$> getFnSignature fnname
 
 -- ----------------------------------------------------------------------------
--- Helper functions
+-- Helper functions for testing
 -- ----------------------------------------------------------------------------
 testParser p = parseTest (runStateT p initParserS)
 tparse p = parse (runStateT p initParserS)
@@ -157,12 +169,9 @@ lowcaseIdent = lexeme . try $ liftM2 tcons lowerChar identifier
 -- FIXME: needs better definition
 infixIdent :: ParserM Text
 infixIdent = lexeme . try $ do
-    c1 <- oneOf infixStarters
-    c2 <- oneOf infixChars
-    c3 <- many $ oneOf infixChars
-    return $ tpack (c1 : c2 : c3)
+    c <- many $ oneOf infixChars
+    return $ tpack c
     where infixChars = "-=_?+*/&^%$!@<>:|" :: String
-          infixStarters = tail infixChars
 
 -- | A generic parameter identifier like ~a.
 genericIdent :: ParserM Text
@@ -178,11 +187,46 @@ typeparamIdent :: ParserM Text
 typeparamIdent = lowcaseIdent
 
 -- ----------------------------------------------------------------------------
+-- Fixity related functions
+-- ----------------------------------------------------------------------------
+fixity :: ParserM ()
+fixity = do
+    constr <- (rword "infixl" >> return InfixLeft)
+              <|> (rword "infixr" >> return InfixRight)
+    i <- integer
+    when (i < 0 || i > 9) $ fail "Can't do this"
+    ops <- infixIdent `sepBy` comma
+    s <- get
+    let fs = constr i <$> ops
+    put s { stateFixity = fs ++ stateFixity s }
+    return ()
+
+-- FIXME: I don't understand why type synonyms cannot be used as type parameter
+buildOpTree :: ParserM [[Operator (StateT ParserS (Parsec Void Text)) Expr]]
+buildOpTree =
+    reverse . map (map toOperator) . groupBy (\ f1 f2 -> fixityN f1 == fixityN f2) <$>
+     sortBy (\ f1 f2 -> fixityN f1 `compare` fixityN f2)
+     <$> gets stateFixity
+
+opsym name =
+  case name of
+    "+" -> Add <$ symbol name
+    "-" -> Sub <$ symbol name
+    "*" -> Sub <$ symbol name
+    "/" -> Div <$ symbol name
+    _   -> Op <$> symbol name
+
+infixTerm name = try $ BinExpr <$> opsym name
+toOperator (InfixLeft _ name) = InfixL $ infixTerm name
+toOperator (InfixRight _ name) = InfixR $ infixTerm name
+
+-- ----------------------------------------------------------------------------
 -- Parsers (from here to end of the file)
 -- ----------------------------------------------------------------------------
 module_ :: ParserM Module
 module_ = do
     imports <- many import_
+    fs <- many fixity
     decls <- many (many (fnDef >>= updateFnDefs) >> decl)
     eof
     return $ Module imports decls
@@ -328,7 +372,9 @@ fnCall = do
                        <|> refExpr
 
 expr :: ParserM Expr
-expr = makeExprParser term ops
+expr = do
+    ops <- buildOpTree
+    makeExprParser term ops
 
 term :: ParserM Expr
 term = when_
@@ -342,18 +388,6 @@ term = when_
          <|> tupleExpr
          <|> lambdaExpr
          <|> refExpr
-
--- TODO: Create user defined prefix operators.
--- TODO: Instead of defining precedence rules like haskell, make some chars
--- define precedence rules. Like if an operator contains : then precedence
--- is 7 etc. (crappy idea)
-ops =
-    [ [ InfixL (BinExpr Mult <$ symbol "*")
-      , InfixL (BinExpr Div  <$ symbol "/") ]
-    , [ InfixL (BinExpr Add  <$ symbol "+")
-      , InfixL (BinExpr Sub  <$ symbol "- ") ]
-    , [InfixL (try $ BinExpr <$> (Op <$> infixIdent)) ]
-    ]
 
 -- ----------------------------------------------------------------------------
 -- Local exprs
