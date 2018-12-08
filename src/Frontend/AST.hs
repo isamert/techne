@@ -3,7 +3,7 @@ module Frontend.AST where
 
 import TechnePrelude
 
-import Data.Data
+import Data.Data hiding (Fixity)
 import qualified Data.Map as Map
 
 -- Some types for clarification
@@ -13,6 +13,24 @@ type ConceptName = Text
 type DataName    = Text
 type FnSignature = [Type]
 
+data Fixity
+    = InfixL  { fixityN :: Integer, fixityName :: Name }
+    | InfixR  { fixityN :: Integer, fixityName :: Name }
+    | Prefix  { fixityN :: Integer, fixityName :: Name }
+    | Postfix { fixityN :: Integer, fixityName :: Name }
+    deriving (Show, Eq, Ord, Data, Typeable)
+
+data Repl
+    = ReplExpr   Expr
+    | ReplImport Import
+    | ReplDecl   Decl
+    | ReplFnDef  FnDef
+    | ReplFixity [Fixity]
+    deriving (Show, Eq, Data, Typeable)
+
+-- ----------------------------------------------------------------------------
+-- Main stuff
+-- ----------------------------------------------------------------------------
 data Expr
     = WhenExpr   { whenTest  :: Maybe Expr
                  , whenCases :: [(Expr, Expr)]

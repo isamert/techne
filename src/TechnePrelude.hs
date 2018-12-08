@@ -11,6 +11,7 @@ module TechnePrelude
     , fromLeft
     , foldlM
     , foldrM
+    , groom
     -- Defined functions
     , startsLower
     , startsUpper
@@ -25,6 +26,9 @@ module TechnePrelude
     , tisUpperFirst
     , tcons
     , tgroom
+    -- String stuff
+    , swords
+    , sstrip
     -- Safe
     , headSafe
     , lastSafe
@@ -37,6 +41,7 @@ module TechnePrelude
 import BasicPrelude
 import qualified Data.Text as T
 import qualified Data.Char as C
+import qualified Data.String as S
 import Data.Semigroup
 import Data.Maybe (fromJust)
 import Data.Either (fromRight, fromLeft)
@@ -75,6 +80,12 @@ tcons = T.cons
 
 tgroom :: Show a => a -> Text
 tgroom = tpack . groom
+
+-- ----------------------------------------------------------------------------
+-- String wrappers
+-- ----------------------------------------------------------------------------
+swords = S.words
+sstrip  = tunpack . T.strip . tpack
 
 -- ----------------------------------------------------------------------------
 -- Safe re-implementations

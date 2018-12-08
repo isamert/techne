@@ -9,9 +9,17 @@ module Frontend.Parser
     , ParserE (..)
     -- State related
     , initParserS
+    -- Lexers
+    , lexeme
+    , rword
+    , colon
     -- Parsers
     , module_
     , expr
+    -- Helpers
+    , parseFile
+    , parseModule
+    , parseReplWithState
     ) where
 
 import TechnePrelude
@@ -37,6 +45,7 @@ data ParserS =
 type ParserM a  = StateT ParserS (Parsec Void Text) a
 type ParserE    = ParseErrorBundle Text Void
 
+
 -- ----------------------------------------------------------------------------
 -- State related functions
 -- ----------------------------------------------------------------------------
@@ -51,12 +60,13 @@ hasFn fnname = do
     return $ fnname `elem` map fnDefName (stateFnDefs state)
 
 -- | Add `def` to function definitions of ParserS
-updateFnDefs :: FnDef -> ParserM ()
+updateFnDefs :: FnDef -> ParserM FnDef
 updateFnDefs def = do
     hasFn <- hasFn (fnDefName def)
     when hasFn (fail "More than one definition for same function.")
     state <- get
-    void . put $ state { stateFnDefs = def : stateFnDefs state }
+    put $ state { stateFnDefs = def : stateFnDefs state }
+    return def
 
 getFnSignature :: Name -> ParserM (Maybe FnSignature)
 getFnSignature fnname = do
@@ -68,11 +78,22 @@ getFnReturnType :: Name -> ParserM (Maybe Type)
 getFnReturnType fnname = (lastSafe =<<) <$> getFnSignature fnname
 
 -- ----------------------------------------------------------------------------
--- Helper functions for testing
+-- Helper functions for parsing in general
 -- ----------------------------------------------------------------------------
 testParser p = parseTest (runStateT p initParserS)
 tparse p = parse (runStateT p initParserS)
 gparse p input = fst . fromRight' $ parse (runStateT p initParserS) "Test" input
+
+parseModule = runStateT module_ initParserS
+parseFile p file = runParser p file <$> readFile file
+parseReplWithState state = parse (runStateT repl state) "repl-line"
+
+repl :: ParserM Repl
+repl = (ReplFixity <$> fixity)
+         <|> (ReplImport <$> import_)
+         <|> (ReplFnDef <$> (fnDef >>= updateFnDefs))
+         <|> (ReplExpr <$> expr)
+         <|> (ReplDecl <$> decl)
 
 -- ----------------------------------------------------------------------------
 -- Lexer
@@ -139,7 +160,7 @@ signedInteger = L.signed spaceConsumer integer
 -- TODO: needs to be updated
 rwords :: [Text]
 rwords = ["if", "then", "else", "elif", "skip", "return", "and", "is",
-                 "or", "while", "when", "use", "from", "data"]
+           "let", "or", "while", "when", "use", "from", "data"]
 
 -- | Parses given reserved word.
 -- rword "if"
@@ -185,14 +206,7 @@ typeparamIdent = lowcaseIdent
 -- ----------------------------------------------------------------------------
 -- Fixity related functions
 -- ----------------------------------------------------------------------------
-data Fixity
-    = InfixL  { fixityN :: Integer, fixityName :: Name }
-    | InfixR  { fixityN :: Integer, fixityName :: Name }
-    | Prefix  { fixityN :: Integer, fixityName :: Name }
-    | Postfix { fixityN :: Integer, fixityName :: Name }
-    deriving (Show, Eq, Ord)
-
-fixity :: ParserM ()
+fixity :: ParserM [Fixity]
 fixity = do
     constr <- (rword "infixl" >> return InfixL)
               <|> (rword "infixr" >> return InfixR)
@@ -204,7 +218,7 @@ fixity = do
     s <- get
     let fs = constr i <$> ops
     put s { stateFixity = fs ++ stateFixity s }
-    return ()
+    return fs
 
 -- FIXME: I don't understand why type synonyms cannot be used as type parameter
 buildOpTree :: ParserM [[E.Operator (StateT ParserS (Parsec Void Text)) Expr]]
@@ -513,6 +527,7 @@ impl = do
 
 fnTop :: ParserM Fn
 fnTop = do
+    rword "let" <|> return ()
     name <- identifier
     params <- getFnSignature name >>= \case
         Just sig -> pattern_`sepBy` comma >>= \pattrns ->
