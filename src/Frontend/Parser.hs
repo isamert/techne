@@ -29,9 +29,10 @@ import qualified Data.Set as Set
 -- Types
 -- ----------------------------------------------------------------------------
 data ParserS =
-    ParserS  { stateFnDefs :: [FnDef]
-             , stateFixity :: [Fixity]
-             } deriving (Show, Eq)
+    ParserS   { stateFnDefs  :: [FnDef]
+              , stateFixity  :: [Fixity]
+              , stateCounter :: Int
+              } deriving (Show, Eq)
 
 type ParserM a  = StateT ParserS (Parsec Void Text) a
 type ParserE    = ParseErrorBundle Text Void
@@ -40,7 +41,9 @@ type ParserE    = ParseErrorBundle Text Void
 -- State related functions
 -- ----------------------------------------------------------------------------
 initParserS :: ParserS
-initParserS = ParserS { stateFnDefs = [] , stateFixity = [] }
+initParserS = ParserS { stateFnDefs = []
+                      , stateFixity = []
+                      , stateCounter = 0 }
 
 hasFn :: Name -> ParserM Bool
 hasFn fnname = do
@@ -230,6 +233,7 @@ hasOp :: Name -> ParserM Bool
 hasOp name = do
     fs <- gets stateFixity
     return $ any (\f -> name == fixityName f) fs
+
 -- ----------------------------------------------------------------------------
 -- Parsers (from here to end of the file)
 -- ----------------------------------------------------------------------------
@@ -320,6 +324,12 @@ params cnsts = param cnsts `sepBy` comma
 typeconst :: ParserM Constraint
 typeconst = TypeConstraint <$> typeparamIdent
 
+freshName :: ParserM Text
+freshName = do
+    s <- get
+    put s { stateCounter = stateCounter s + 1 }
+    return $ "anonparam$" ++ tshow (stateCounter s)
+
 -- ----------------------------------------------------------------------------
 -- Primitives
 -- ----------------------------------------------------------------------------
@@ -362,16 +372,18 @@ fnCall :: ParserM Expr
 fnCall = do
     first <- try (parens expr) <|> fnCallTerm
     pairs <- many $ try (liftM2 (,) (dot <|> oper) fnAppl)
-    return $ foldl concatFn first pairs
+    foldlM concatFn first pairs
     where concatFn (TupleExpr tuple) (".", fnappl) =
-            fnappl { fnApplTuple = tuple <> fnApplTuple fnappl }
-          concatFn expr (".", app) = app `prependFnAppl` IndexedTElem expr
-          concatFn expr (op, app) = FnApplExpr op (Tuple [IndexedTElem expr, IndexedTElem (mkLambda [mksParam "x" UnknownType] (app `prependFnAppl` IndexedTElem (mksRef "x")))])
+            return $ fnappl { fnApplTuple = tuple <> fnApplTuple fnappl }
+          concatFn expr (".", app) = return $ app `prependFnAppl` IndexedTElem expr
+          concatFn expr (op, app) = do
+            name <- freshName
+            return $ FnApplExpr op (mkTuple [expr, mkLambda [mksParam name UnknownType] (app `prependFnAppl` IndexedTElem (mksRef name))])
           oper = do
               x <- infixIdent
               hasop <- hasOp x
               if hasop
-                 then fail "zaxd"
+                 then fail "a call operator but found an infix operator"
                  else return x
 
 expr :: ParserM Expr
@@ -420,9 +432,6 @@ litExpr = LitExpr <$> lit
 lambdaExpr :: ParserM Expr
 lambdaExpr = FnExpr <$> lambda
 
--- FIXME: RHS of the `->` should be a pattern.
--- What about bools? Should I accept them directly or do they need an extra
--- guard or something like that?
 when_ :: ParserM Expr
 when_ = do
     rword "when"
@@ -441,6 +450,7 @@ match_ = do
     return $ MatchExpr predicate pairs
 
 -- FIXME: nested if's need an terminator (like end)
+-- FIXME: else
 if_ :: ParserM Expr
 if_ = do
     rword "if"

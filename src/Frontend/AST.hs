@@ -269,3 +269,5 @@ mkLambda prms body = FnExpr $
        , fnBody = body
        , fnScope = [] }
 
+mkTuple :: [a] -> Tuple a
+mkTuple xs = Tuple $ map IndexedTElem xs

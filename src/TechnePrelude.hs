@@ -9,6 +9,8 @@ module TechnePrelude
     , fromJust
     , fromRight
     , fromLeft
+    , foldlM
+    , foldrM
     -- Defined functions
     , startsLower
     , startsUpper
@@ -38,6 +40,7 @@ import qualified Data.Char as C
 import Data.Semigroup
 import Data.Maybe (fromJust)
 import Data.Either (fromRight, fromLeft)
+import Data.Foldable (foldlM, foldrM)
 import Text.Groom (groom)
 
 import Debug.Trace (trace, traceId) -- TODO: Remove in production
