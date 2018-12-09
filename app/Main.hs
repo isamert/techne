@@ -5,6 +5,7 @@ import TechnePrelude
 import Frontend.AST
 import Frontend.Desugar
 import Frontend.Parser
+import Frontend.Infer
 
 import Text.Megaparsec
 import Text.Megaparsec.Char
@@ -99,7 +100,8 @@ replSettings = Settings { historyFile = Just histfile
           -- TODO: I should probably use XDG cache directory
 
 cmds :: [(String, String)]
-cmds = [("quit", "q"), ("load-module", "lm"), ("load-file", "lf"), ("dump-state", "ds")]
+cmds = [("quit", "q"),        ("load-module", "lm"), ("load-file", "lf"),
+        ("dump-state", "ds"), ("type","t")]
 
 replComplete :: MonadIO m => String -> String -> m [Completion]
 replComplete left_ word = do
@@ -126,6 +128,11 @@ repl = do
         Just ":quit" -> return ()
         Just ":dump-state" -> groom <$> lift (gets parserState) >>= outputStrLn >> repl
         Just str
+          | ":type " `isPrefixOf` str -> case parseReplWithState pstate (cmdInput str) of
+              Right (x, pstate) -> case x of
+                                     ReplExpr expr -> (outputStrLn . show) (groom <$> inferExpr emptyTypeEnv expr) >> repl
+                                     _             -> printAndUpdateState x pstate
+              Left y -> printErrBundle y
           | ":load-file " `isPrefixOf` str -> do
               let files = drop 1 $ swords str
               modules <- mapM (parseFile parseModule) files
@@ -136,5 +143,6 @@ repl = do
               Right (x, pstate) -> printAndUpdateState x pstate
               Left y -> printErrBundle y
     where printErrBundle err = outputStrLn (errorBundlePretty err) >> repl
-          printAndUpdateState x pstate = outputStrLn (groom x)
-            >> lift (modify (\s -> s { parserState = pstate})) >> repl
+          printAndUpdateState x pstate = outputStrLn (groom x) >> updateState pstate
+          updateState pstate = lift (modify (\s -> s { parserState = pstate})) >> repl
+          cmdInput str = unwords . drop 1 . words $ tpack str
