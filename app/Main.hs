@@ -18,14 +18,37 @@ import Data.Void (Void)
 import System.Console.Haskeline
 import System.Directory (getHomeDirectory)
 import System.IO.Unsafe (unsafePerformIO)
---
+
+-- ----------------------------------------------------------------------------
+-- Data declerations
+-- ----------------------------------------------------------------------------
 -- Commandline options
---
 data Options = Options
   { interactive :: Bool
   , output :: Text
   , input :: Maybe String }
 
+-- Repl monad
+newtype ReplS = ReplS { parserState :: ParserS
+                   } deriving (Show, Eq)
+
+type ReplM = InputT (StateT ReplS IO)
+
+-- ----------------------------------------------------------------------------
+-- Main
+-- ----------------------------------------------------------------------------
+-- | Get commandline options and display information if necessary.
+main :: IO ()
+main = runOptions =<< execParser opts
+  where
+    opts = info (options <**> helper)
+      (fullDesc
+     <> progDesc "Compile files or run an interactive shell."
+     <> header "Techne")
+
+-- ----------------------------------------------------------------------------
+-- Commandline options
+-- ----------------------------------------------------------------------------
 optInteractive :: Parser Bool
 optInteractive = switch $
     long "interactive"
@@ -49,19 +72,6 @@ options = Options
     <*> optOutput
     <*> optInput
 
---
--- Main
---
-
--- | Get commandline options and display information if necessary.
-main :: IO ()
-main = runOptions =<< execParser opts
-  where
-    opts = info (options <**> helper)
-      (fullDesc
-     <> progDesc "Compile files or run an interactive shell."
-     <> header "Techne")
-
 -- | Do stuff depending on commandline options.
 runOptions :: Options -> IO ()
 runOptions (Options _ output (Just input)) = runInputT defaultSettings $ do
@@ -76,20 +86,13 @@ runOptions (Options i outf inf) = putStrLn $ tgroom i <> tgroom outf <> tgroom i
 -- ----------------------------------------------------------------------------
 -- REPL
 -- ----------------------------------------------------------------------------
-data ReplS = ReplS { parserState :: ParserS
-                   , replsCounter :: Int
-                   } deriving (Show, Eq)
-
-type ReplM = InputT (StateT ReplS IO)
-
 initReplS :: ReplS
 initReplS = ReplS { parserState = initParserS
-                  , replsCounter = 0
                   }
 
 replSettings :: MonadIO m => Settings m
 replSettings = Settings { historyFile = Just histfile
-                        , complete = completeWordWithPrev Nothing " \t" $ replComplete
+                        , complete = completeWordWithPrev Nothing " \t" replComplete
                         , autoAddHistory = True
                         }
     where histfile = unsafePerformIO getHomeDirectory ++ "/.technehist" -- Am I a monster?
@@ -121,18 +124,17 @@ repl = do
         Just ""      -> repl
         Just ":q"    -> return ()
         Just ":quit" -> return ()
-        Just ":dump-state" -> groom <$> (lift $ gets parserState) >>= outputStrLn >> repl
+        Just ":dump-state" -> groom <$> lift (gets parserState) >>= outputStrLn >> repl
         Just str
-          | ":load-file" `isPrefixOf` str -> do
+          | ":load-file " `isPrefixOf` str -> do
               let files = drop 1 $ swords str
               modules <- mapM (parseFile parseModule) files
-              forM modules (\case
+              forM_ modules (\case
                 Right (x, pstate) -> printAndUpdateState x pstate
-                Left y            -> printErrBundle y) >> return ()
+                Left y            -> printErrBundle y)
         Just input -> case parseReplWithState pstate (tpack input) of
               Right (x, pstate) -> printAndUpdateState x pstate
               Left y -> printErrBundle y
     where printErrBundle err = outputStrLn (errorBundlePretty err) >> repl
           printAndUpdateState x pstate = outputStrLn (groom x)
             >> lift (modify (\s -> s { parserState = pstate})) >> repl
-

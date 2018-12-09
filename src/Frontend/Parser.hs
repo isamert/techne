@@ -45,7 +45,6 @@ data ParserS =
 type ParserM a  = StateT ParserS (Parsec Void Text) a
 type ParserE    = ParseErrorBundle Text Void
 
-
 -- ----------------------------------------------------------------------------
 -- State related functions
 -- ----------------------------------------------------------------------------
