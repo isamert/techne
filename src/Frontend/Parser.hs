@@ -212,30 +212,23 @@ fixity = do
               <|> (rword "postfix" >> return Postfix)
               <|> (rword "prefix" >> return Prefix)
     i <- integer
-    when (i < 0 || i > 9) $ fail "Can't do this"
     ops <- infixIdent `sepBy` comma
     s <- get
     let fs = constr i <$> ops
     put s { stateFixity = fs ++ stateFixity s }
     return fs
 
--- FIXME: I don't understand why type synonyms cannot be used as type parameter
 buildOpTree :: ParserM [[E.Operator (StateT ParserS (Parsec Void Text)) Expr]]
 buildOpTree =
     reverse . map (map toOperator) . groupBy (\ f1 f2 -> fixityN f1 == fixityN f2) <$>
      sortBy (\ f1 f2 -> fixityN f1 `compare` fixityN f2)
      <$> gets stateFixity
 
-opsym name def =
-  case name of
-    "+" -> Add <$ symbol name
-    "-" -> Sub <$ symbol name
-    "*" -> Sub <$ symbol name
-    "/" -> Div <$ symbol name
-    _   -> def <$> symbol name
+infixTerm :: Text -> ParserM (Expr -> Expr -> Expr)
+infixTerm name = try $ EBinary <$> symbol name
 
-infixTerm name = try $ BinExpr <$> opsym name BinOp
-unaryTerm name = try $ UnExpr <$> opsym name UnOp
+unaryTerm :: Text -> ParserM (Expr -> Expr)
+unaryTerm name = try $ EUnary <$> symbol name
 
 toOperator (InfixL  _ name) = E.InfixL  $ infixTerm name
 toOperator (InfixR  _ name) = E.InfixR  $ infixTerm name
@@ -376,10 +369,18 @@ lambda = do
     body <- expr
     return $ Fn Nothing prms UnknownType body []
 
+-- FIXME: While this[1] is valid, this[2] will produce some inconsistencies
+-- with typechecker. Look for infer env (FnApplExpr ... in Frontend.Infer
+-- especially fixOrder function.
+-- [1]: (fn a, b, c -> a + b + c)(1)(2)(3)
+-- [2]: (fn a, b, c -> a + b + c)(c=3)(1,2) OR other variations with named args
 fnAppl :: ParserM Expr
 fnAppl = liftM2 FnApplExpr
-                identifier
-                (tuple expr)
+                fnApplTerm
+                args
+    where args = do
+            xs <- some $ tuple expr
+            return $ foldl1 (<>) xs
 
 fnCall :: ParserM Expr
 fnCall = do
@@ -391,7 +392,7 @@ fnCall = do
           concatFn expr (".", app) = return $ app `prependFnAppl` IndexedTElem expr
           concatFn expr (op, app) = do
             name <- freshName
-            return $ FnApplExpr op (mkTuple [expr, mkLambda [mksParam name UnknownType] (app `prependFnAppl` IndexedTElem (mksRef name))])
+            return $ FnApplExpr (mksRef op) (mkTuple [expr, mkLambda [mksParam name UnknownType] (app `prependFnAppl` IndexedTElem (mksRef name))])
           oper = do
               x <- infixIdent
               hasop <- hasOp x
@@ -408,8 +409,8 @@ term :: ParserM Expr
 term = when_
          <|> match_
          <|> if_
-         <|> try fnCall
          <|> try fnAppl
+         <|> try fnCall
          <|> litExpr
          <|> listExpr
          <|> try (parens expr)
@@ -427,6 +428,11 @@ fnCallTerm = when_
               <|> tupleExpr
               <|> lambdaExpr
               <|> refExpr
+
+-- FIXME: match_ if_ when_ fnCall may also return a lambda
+fnApplTerm :: ParserM Expr
+fnApplTerm =  refExpr <|> parens lambdaExpr
+
 -- ----------------------------------------------------------------------------
 -- Local exprs
 -- ----------------------------------------------------------------------------

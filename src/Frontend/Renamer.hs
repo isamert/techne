@@ -48,26 +48,26 @@ renameModule (Module imports decls) env = do
 -- ----------------------------------------------------------------------------
 -- TODO: rename PlaceHolders too
 renameExpr :: Expr -> GenEnv -> RenamerM Expr
-renameExpr (RefExpr ref@Ref {refName=name}) env = do
+renameExpr (ERef name typ) env = do
     name <- renameFreeVar name env
-    return $ RefExpr ref {refName=name}
+    return $ ERef name typ
 
 renameExpr (ListExpr list) env = ListExpr <$> renameList (`renameExpr` env) list
 renameExpr (TupleExpr tuple) env = TupleExpr <$> renameTuple (`renameExpr` env) tuple
 
 -- TODO: scope
-renameExpr (FnExpr fn@Fn {fnParams = params, fnBody = expr, fnScope = scope}) env = do
+renameExpr fn@(EFn name prms_ rt expr_ scope) env = do
     prms <- resetCurrEnv >> renameParams
     currenv <- gets currEnv
-    exp  <- renameExpr expr (Map.union currenv env) -- union is left-biased
-    return $ FnExpr $ fn { fnParams = prms, fnBody = exp }
-    where renameParams = forM params $ \case
+    expr <- renameExpr expr_ (Map.union currenv env) -- union is left-biased
+    return $ EFn name prms rt expr scope
+    where renameParams = forM prms_ $ \case
             (DataParam name typ) -> flip DataParam typ <$> insertCurrEnv name
             (Param ptrn typ) -> flip Param typ <$> renamePattern ptrn
 
-renameExpr (FnApplExpr name tuple) env =
+renameExpr (FnApplExpr expr tuple) env =
     liftM2 FnApplExpr
-           (renameFreeVar name env) $ renameTuple (`renameExpr` env) tuple
+           (renameExpr expr env) $ renameTuple (`renameExpr` env) tuple
 
 renameExpr (MatchExpr test cases) env = do
     t  <- renameExpr test env

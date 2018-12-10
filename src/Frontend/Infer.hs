@@ -33,7 +33,13 @@ data IType
     | TArr IType IType
     deriving (Show, Eq, Ord)
 
-infixr `TArr`
+pattern T a          = TCon a
+pattern Tv a         = TVar (TV a)
+pattern t1    :-> t2 = TArr t1 t2
+pattern tvars :=> t  = Forall tvars t
+
+infixr :->
+infixr :=>
 
 data InferE
     = UnboundVariable Text
@@ -82,6 +88,27 @@ letters :: [String]
 letters = [1..] >>= flip replicateM ['a'..'z']
 
 -- ----------------------------------------------------------------------------
+-- typeOf
+-- ----------------------------------------------------------------------------
+class Typed a where
+    typeOf :: a -> InferM IType
+
+instance Typed Op where
+    typeOf (BinOp  "+") = return $ T"int"   :-> T"int"   :-> T"int"
+    typeOf (BinOp  "-") = return $ T"int"   :-> T"int"   :-> T"int"
+    typeOf (BinOp  "*") = return $ T"int"   :-> T"int"   :-> T"int"
+    typeOf (BinOp  "/") = return $ T"float" :-> T"float" :-> T"float"
+    typeOf (BinOp "==") = instantiate $ [TV"a"] :=> Tv"a" :-> Tv"a" :-> T"bool"
+
+instance Typed Lit where
+    typeOf (ChrLit  _) = return $ T"char"
+    typeOf (StrLit  _) = return $ T"string"
+    typeOf (IntLit  _) = return $ T"int"
+    typeOf (FltLit  _) = return $ T"float"
+    typeOf (FracLit _) = return $ T"frac"
+    typeOf (BoolLit _) = return $ T"bool"
+
+-- ----------------------------------------------------------------------------
 -- Substitutable
 -- ----------------------------------------------------------------------------
 class Substitutable a where
@@ -91,11 +118,11 @@ class Substitutable a where
 instance Substitutable IType where
     apply _ (TCon a)       = TCon a
     apply s t@(TVar a)     = Map.findWithDefault t a s
-    apply s (t1 `TArr` t2) = apply s t1 `TArr` apply s t2
+    apply s (t1 :-> t2) = apply s t1 :-> apply s t2
 
     ftv (TVar var) = Set.singleton var
     ftv (TCon _  ) = Set.empty
-    ftv (t1 `TArr` t2) = ftv t1 `Set.union` ftv t2
+    ftv (t1 :-> t2) = ftv t1 `Set.union` ftv t2
 
 instance Substitutable Scheme where
   apply s (Forall as t)   = Forall as $ apply s' t
@@ -114,7 +141,7 @@ instance Substitutable TypeEnv where
 -- Main functions
 -- ----------------------------------------------------------------------------
 unify ::  IType -> IType -> InferM Subst
-unify (l `TArr` r) (l' `TArr` r')  = do
+unify (l :-> r) (l' :-> r')  = do
     s1 <- unify l l'
     s2 <- unify (apply s1 r) (apply s1 r')
     return (s2 `composeSubst` s1)
@@ -145,19 +172,18 @@ closeOver (sub, ty) = normalize sc
 
 normalize :: Scheme -> Scheme
 normalize (Forall ts body) = Forall (fmap snd ord) (normtype body)
-  where
-    ord = zip (nub $ fv body) (fmap (TV . tpack) letters)
+  where ord = zip (nub $ fv body) (fmap (TV . tpack) letters)
 
-    fv (TVar a)   = [a]
-    fv (TArr a b) = fv a ++ fv b
-    fv (TCon _)   = []
+        fv (TVar a)   = [a]
+        fv (a :-> b)  = fv a ++ fv b
+        fv (TCon _)   = []
 
-    normtype (TArr a b) = TArr (normtype a) (normtype b)
-    normtype (TCon a)   = TCon a
-    normtype (TVar a)   =
-      case lookup a ord of
-        Just x -> TVar x
-        Nothing -> error "type variable not in signature"
+        normtype (a :-> b)  = normtype a :-> normtype b
+        normtype (TCon a)   = TCon a
+        normtype (TVar a)   =
+          case lookup a ord of
+            Just x -> TVar x
+            Nothing -> error "type variable not in signature"
 
 lookupEnv :: TypeEnv -> Name -> InferM (Subst, IType)
 lookupEnv (TypeEnv env) x =
@@ -168,19 +194,32 @@ lookupEnv (TypeEnv env) x =
 
 inferPrim :: TypeEnv -> [Expr] -> IType -> InferM (Subst, IType)
 inferPrim env l t = do
-  tv <- fresh
-  (s1, tf) <- foldM inferStep (emptySubst, id) l
-  s2 <- unify (apply s1 (tf tv)) t
-  return (s2 `composeSubst` s1, apply s2 tv)
-  where inferStep (s, tf) exp = do
-          (s', t) <- infer (apply s env) exp
-          return (s' `composeSubst` s, tf . TArr t)
+    tv <- fresh
+    (s1, tf) <- foldM inferStep (emptySubst, id) l
+    s2 <- unify (apply s1 (tf tv)) t
+    return (s2 `composeSubst` s1, apply s2 tv)
+    where inferStep (s, tf) exp = do
+            (s', t) <- infer (apply s env) exp
+            return (s' `composeSubst` s, tf . (t :->))
 
 infer :: TypeEnv -> Expr -> InferM (Subst, IType)
-infer env (RefExpr (Ref name _)) =  lookupEnv env name
-infer env (LitExpr (IntLit _))   = return (emptySubst, TCon "Int")
-infer env (BinExpr op e1 e2)   = inferPrim env [e1, e2] (TCon "Int" `TArr` TCon "Int" `TArr` TCon "Int")
-infer env (FnExpr (Fn name prms rt body scope)) = do
+infer env (ERef name _) =  lookupEnv env name
+
+infer env (LitExpr lit)   = do
+    typ <- typeOf lit
+    return (emptySubst, typ)
+
+infer env (BinExpr op e1 e2)   = do
+    typ <- typeOf op
+    inferPrim env [e1, e2] typ
+
+infer env (FnApplExpr expr (Tuple tuple)) = do
+    (s1, t1) <- infer env expr
+    inferPrim (apply s1 env) (map fixOrder tuple) t1
+    where fixOrder (IndexedTElem expr) = expr
+          fixOrder (NamedTElem _ expr) = expr -- FIXME: parser/fnAppl
+
+infer env (EFn name prms rt body scope) = do
     tvars <- replicateM (length prms) fresh
     let ntp = zipWith (\p tv -> case p of
                          Param (BindPattern name) _ -> (name, Forall [] tv)
@@ -188,7 +227,7 @@ infer env (FnExpr (Fn name prms rt body scope)) = do
     let env' = env `extendTypeEnvAll` ntp
     (s1, t1) <- infer env' body
     let paramts = apply s1 tvars
-    let rtype = foldr TArr t1 paramts
+    let rtype = foldr (:->) t1 paramts
     return (s1,  rtype)
 
 -- ----------------------------------------------------------------------------

@@ -33,11 +33,13 @@ dependencies:
 - uniplate >= 1.6.12
 - groom >= 0.1.2.1
 - directory >= 1.3.1.5
+- pretty >= 1.1.3.6
 
 default-extensions:
 - OverloadedStrings
 - NoImplicitPrelude
 - LambdaCase
+- PatternSynonyms
 
 library:
   source-dirs: src

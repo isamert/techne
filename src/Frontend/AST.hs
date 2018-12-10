@@ -1,4 +1,6 @@
-{-# LANGUAGE DeriveFunctor, GeneralizedNewtypeDeriving, DeriveDataTypeable #-}
+{-# LANGUAGE DeriveFunctor              #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DeriveDataTypeable         #-}
 module Frontend.AST where
 
 import TechnePrelude
@@ -31,7 +33,7 @@ data Expr
     | MatchExpr  { matchTest  :: Expr
                  , matchCases :: [(Pattern, Expr)]
                  }
-    | FnApplExpr { fnApplName  :: Name
+    | FnApplExpr { fnApplExpr  :: Expr
                  , fnApplTuple :: Tuple Expr
                  }
     | LitExpr    Lit
@@ -156,11 +158,7 @@ newtype List a
     deriving (Show, Eq, Functor, Semigroup, Monoid, Data, Typeable)
 
 data Op
-    = Add
-    | Sub
-    | Mult
-    | Div
-    | BinOp { opName :: Name }
+    = BinOp { opName :: Name }
     | UnOp  { opName :: Name }
     deriving (Show, Eq, Data, Typeable)
 
@@ -210,3 +208,16 @@ mkLambda prms body = FnExpr $
 
 mkTuple :: [a] -> Tuple a
 mkTuple xs = Tuple $ map IndexedTElem xs
+
+pattern EUnary  name expr            = UnExpr    (UnOp    name) expr
+pattern EBinary name exprl exprr     = BinExpr   (BinOp   name) exprl exprr
+pattern EList   x                    = ListExpr  (List       x)
+pattern ETuple  x                    = TupleExpr (Tuple      x)
+pattern EChr    x                    = LitExpr   (ChrLit     x)
+pattern EStr    x                    = LitExpr   (StrLit     x)
+pattern EInt    x                    = LitExpr   (IntLit     x)
+pattern EFlt    x                    = LitExpr   (FltLit     x)
+pattern EFrac   x                    = LitExpr   (FracLit    x)
+pattern EBool   x                    = LitExpr   (BoolLit    x)
+pattern ERef name typ                = RefExpr   (Ref name typ)
+pattern EFn name prms rt body scope  = FnExpr (Fn name prms rt body scope)
