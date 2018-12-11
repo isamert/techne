@@ -129,7 +129,7 @@ repl = do
         Just str
           | ":type " `isPrefixOf` str -> case parseReplWithState pstate (cmdInput str) of
               Right (x, pstate) -> case x of
-                                     ReplExpr expr -> (outputStrLn . show) (groom <$> inferExpr emptyTypeEnv expr) >> repl
+                                     ReplExpr expr -> (outputStrLn . groom) (inferExpr emptyTypeEnv expr) >> repl
                                      _             -> printAndUpdateState x pstate
               Left y -> printErrBundle y
           | ":load-file " `isPrefixOf` str -> do
