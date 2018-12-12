@@ -1,11 +1,14 @@
 module Frontend.Infer
     ( inferExpr
-    , emptyTypeEnv
+    , inferDecl
+    , initTypeEnv
     , TypeEnv(..)
     , Subst(..)
     , IType(..)
     , Scheme(..)
     , TVar(..)
+    , TCon(..)
+    , Kind(..)
     ) where
 
 import TechnePrelude
@@ -46,7 +49,7 @@ data InferE
     | KindMismatch TVar IType
     deriving (Show, Eq, Ord)
 
-newtype TypeEnv = TypeEnv (Map.Map Name Scheme)
+newtype TypeEnv = TypeEnv (Map.Map Name Scheme) deriving (Show, Eq, Ord)
 newtype InferS = InferS { counter :: Int }
 type InferM = ExceptT InferE (State InferS)
 type Subst = Map.Map TVar IType
@@ -57,25 +60,10 @@ type Subst = Map.Map TVar IType
 -- A concrete type
 pattern T a = TCon (TC a Star)
 
--- Type definitions
-tArrow      = "->"      `isKindOf` Star -*> Star -*> Star
-tList       = "[]"      `isKindOf` Star -*> Star
-tTuple2     = "(,)"     `isKindOf` Star -*> Star -*> Star
-tTuple3     = "(,,)"    `isKindOf` Star -*> Star -*> Star -*> Star
-tTuple4     = "(,,,)"   `isKindOf` Star -*> Star -*> Star -*> Star -*> Star
-tTuple5     = "(,,,,)"  `isKindOf` Star -*> Star -*> Star -*> Star -*> Star -*> Star
-tTuple6     = "(,,,,,)" `isKindOf` Star -*> Star -*> Star -*> Star -*> Star -*> Star -*> Star
+-- A type scheme for a concrete type
+pattern S a = Forall [] a
 
--- Polymorphic types
-list        = TAp tList
-tuple2      = TAp tTuple2
-tuple3      = TAp tTuple3
-tuple4      = TAp tTuple4
-tuple5      = TAp tTuple5
-tuple6      = TAp tTuple6
-
--- An example for (int,int):
--- y = tuple2 (T"int" `TAp` T"int")
+pattern Tv a = (TVar (TV a Star))
 
 infixr ->>
 infixr -*>
@@ -94,30 +82,68 @@ a ->> b = TAp (TAp tArrow a) b
 isKindOf :: Text -> Kind -> IType
 a `isKindOf` b = TCon (TC a b)
 
+-- Type definitions
+tArrow      = "->"      `isKindOf` Star -*> Star -*> Star
+tList       = "[]"      `isKindOf` Star -*> Star
+tTuple2     = "(,)"     `isKindOf` Star -*> Star -*> Star
+tTuple3     = "(,,)"    `isKindOf` Star -*> Star -*> Star -*> Star
+tTuple4     = "(,,,)"   `isKindOf` Star -*> Star -*> Star -*> Star -*> Star
+tTuple5     = "(,,,,)"  `isKindOf` Star -*> Star -*> Star -*> Star -*> Star -*> Star
+tTuple6     = "(,,,,,)" `isKindOf` Star -*> Star -*> Star -*> Star -*> Star -*> Star -*> Star
+
+-- Polymorphic types that you can apply a type, like [*]
+pArrow       = TAp tArrow
+pList        = TAp tList
+pTuple2      = TAp tTuple2
+pTuple3      = TAp tTuple3
+pTuple4      = TAp tTuple4
+pTuple5      = TAp tTuple5
+pTuple6      = TAp tTuple6
+
+-- An example for (int,int):
+-- y = pTuple2 (T"int" `TAp` T"int")
+
 -- ----------------------------------------------------------------------------
 -- typeOf
 -- ----------------------------------------------------------------------------
 class Typed a where
     typeOf :: a -> InferM IType
 
--- FIXME: these are just examples, change them wi
+-- FIXME: implement type classes and get rid of different functions for Nums
 instance Typed Op where
-    typeOf (UnOp    "?")  = return $ T"int" ->> T"bool"
+    -- int ops
     typeOf (BinOp   "+")  = return $ T"int" ->> T"int" ->> T"int"
     typeOf (BinOp   "-")  = return $ T"int" ->> T"int" ->> T"int"
     typeOf (BinOp   "*")  = return $ T"int" ->> T"int" ->> T"int"
     typeOf (BinOp   "/")  = return $ T"int" ->> T"int" ->> T"float"
-    typeOf (BinOp  "++") = do
-        let glist = list (TVar (TV "a" Star))
-        instantiate $ Forall [TV "a" Star] (glist ->> glist ->> glist)
+
+    -- float ops
+    typeOf (BinOp   "+.")  = return $ T"float" ->> T"float" ->> T"float"
+    typeOf (BinOp   "-.")  = return $ T"float" ->> T"float" ->> T"float"
+    typeOf (BinOp   "*.")  = return $ T"float" ->> T"float" ->> T"float"
+    typeOf (BinOp   "/.")  = return $ T"float" ->> T"float" ->> T"float"
+
+    -- list ops
+    typeOf (BinOp  "++") =
+        instantiate $ Forall [TV "a" Star] (gList ->> gList ->> gList)
+        where gList = pList (TVar (TV "a" Star))
 
 instance Typed Lit where
-    typeOf (StrLit  _) = return $ list (T"char")
+    typeOf (StrLit  _) = return $ pList (T"char")
     typeOf (ChrLit  _) = return $ T"char"
     typeOf (IntLit  _) = return $ T"int"
     typeOf (FltLit  _) = return $ T"float"
     typeOf (FracLit _) = return $ T"frac"
     typeOf (BoolLit _) = return $ T"bool"
+
+initTypeEnv :: TypeEnv
+initTypeEnv = TypeEnv $ Map.fromList
+    [ ("float2int", S $ T"float" ->> T"int")
+    , ("int2float", S $ T"int" ->> T"float")
+    , ("map",       Forall [TV "a" Star, TV "b" Star] (pList (Tv"a") ->> (Tv"a" ->> Tv"b") ->> pList (Tv"b")))]
+
+emptyTypeEnv :: TypeEnv
+emptyTypeEnv = TypeEnv Map.empty
 
 -- ----------------------------------------------------------------------------
 -- kindOf
@@ -190,9 +216,6 @@ occursCheck a t = a `Set.member` ftv t
 emptySubst :: Subst
 emptySubst = Map.empty
 
-emptyTypeEnv :: TypeEnv
-emptyTypeEnv = TypeEnv Map.empty
-
 composeSubst :: Subst -> Subst -> Subst
 composeSubst s1 s2 = Map.map (apply s1) s2 `Map.union` s1
 
@@ -229,7 +252,7 @@ generalize :: TypeEnv -> IType -> Scheme
 generalize env t  = Forall as t
     where as = Set.toList $ ftv t `Set.difference` ftv env
 
-closeOver :: (Map.Map TVar IType, IType) -> Scheme
+closeOver :: (Subst, IType) -> Scheme
 closeOver (sub, ty) = normalize sc
     where sc = generalize emptyTypeEnv (apply sub ty)
 
@@ -292,39 +315,68 @@ infer env (ETuple tup)
     where fixOrder (IndexedTElem expr) = expr
           fixOrder (NamedTElem _ expr) = expr
           selectTupleCons tup = case length tup of
-                                  2 -> tuple2
-                                  3 -> tuple3
-                                  4 -> tuple4
-                                  5 -> tuple5
-                                  6 -> tuple6
+                                  2 -> pTuple2
+                                  3 -> pTuple3
+                                  4 -> pTuple4
+                                  5 -> pTuple5
+                                  6 -> pTuple6
 
 infer env (EList l)
-  | null l = fresh Star >>= \t -> return (emptySubst, list t)
+  | null l = fresh Star >>= \t -> return (emptySubst, pList t)
   | otherwise = do
       i <- infer env (head l)
       p <- mapM (infer env) (tail l)
       (s, t) <- foldrM unifyList i p
-      return (s, apply s (list t))
+      return (s, apply s (pList t))
     where unifyList (s, t) (s', t') = do
             s2 <- unify t' t
-            return (s `composeSubst` s', apply s2 t)
+            return (s2 `composeSubst` s' `composeSubst` s, apply s2 t)
 
 infer env (FnApplExpr expr (Tuple tuple)) = do
     (s1, t1) <- infer env expr
-    inferPrim (apply s1 env) (map fixOrder tuple) t1
+    (s2, t2) <- inferPrim (apply s1 env) (map fixOrder tuple) t1
+    return $ (s2 `composeSubst` s1, t2)
     where fixOrder (IndexedTElem expr) = expr
           fixOrder (NamedTElem _ expr) = expr -- FIXME: parser/fnAppl
 
 infer env (EFn name prms rt body scope) = do
-    tvars <- replicateM (length prms) (fresh Star)
-    let ntp = zipWith (\p tv -> case p of
-                         Param (BindPattern name) _ -> (name, Forall [] tv)
-                         _                          -> error "zaxd") prms tvars
-    let env' = env `extendTypeEnvAll` ntp
+    ps <- mapM (\(Param ptrn typ) -> inferPattern ptrn) prms
+    let paramtyps = concat ps
+        env'      = env `extendTypeEnvAll` (onlyNamed paramtyps)
     (s1, t1) <- infer env' body
-    let paramts = apply s1 tvars
+    let paramts = apply s1 (map (scheme2itype . snd) paramtyps)
     let rtype = foldr (->>) t1 paramts
     return (s1,  rtype)
+    where inferPattern (BindPattern name) = do
+            fresh Star >>= \tvar -> return [(Just name, Forall [] tvar)]
+          inferPattern (ElsePattern name) = do
+            fresh Star >>= \tvar -> return [(name, Forall [] tvar)]
+          inferPattern (RestPattern name) = do
+            fresh Star >>= \tvar -> return [(name, Forall [] (pList tvar))]
+          inferPattern (RegexPattern name _) = do
+            fresh Star >>= \tvar -> return [(name, Forall [] (T"string"))]
+          inferPattern (LitPattern name lit) = do
+              (s, t) <- infer emptyTypeEnv (LitExpr lit)
+              return [(name, generalize emptyTypeEnv t)]
+          inferPattern (ListPattern name (List l))
+            | null l = fresh Star >>= \t -> return [(name, Forall [] (pList t))]
+            {-| otherwise = do
+                i <- inferPattern emptyTypeEnv (head l)
+                p <- mapM (inferPattern emptyTypeEnv) (tail l)
+                (s, t) <- foldrM unifyList i p
+                return (name, apply s (pList t))
+              where unifyList (_, t) (_, t') = do
+                      s2 <- unify t' t
+                      return (, apply s2 t)
+            -}
+
+          scheme2itype (Forall _ itype) = itype
+
+          onlyNamed xs = map (\(a,b) -> (fromJust a, b)) $ filter filterNameless xs
+          filterNameless (Just a, _) = True
+          filterNameless (Nothing, _) = False
+
+
 
 -- ----------------------------------------------------------------------------
 -- Runners
@@ -337,5 +389,9 @@ runInfer m = case evalState (runExceptT m) initInferS of
 inferExpr :: TypeEnv -> Expr -> Either InferE Scheme
 inferExpr env = runInfer . infer env
 
-inferModule :: TypeEnv -> Module -> Either InferE [(Name, Scheme)]
+inferModule :: TypeEnv -> Module -> Either InferE TypeEnv
 inferModule = undefined
+
+inferDecl :: TypeEnv -> Decl -> Either InferE TypeEnv
+inferDecl env (FnDecl fn@(Fn (Just name) _ _ _ _)) =
+    (\scheme -> extendTypeEnv env (name,scheme)) <$> inferExpr env (FnExpr fn)

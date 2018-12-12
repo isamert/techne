@@ -5,6 +5,7 @@ import Frontend.AST
 import Frontend.Desugar
 import Frontend.Parser
 import Frontend.Infer
+import Frontend.Pretty
 
 import Text.Megaparsec
 import Text.Megaparsec.Char
@@ -29,7 +30,8 @@ data Options = Options
   , input :: Maybe String }
 
 -- Repl monad
-newtype ReplS = ReplS { parserState :: ParserS
+data ReplS = ReplS { parserState :: ParserS
+                   , typeEnv     :: TypeEnv
                    } deriving (Show, Eq)
 
 type ReplM = InputT (StateT ReplS IO)
@@ -80,14 +82,18 @@ runOptions (Options _ output (Just input)) = runInputT defaultSettings $ do
       Right a -> tgroom a
       Left a -> tpack $ errorBundlePretty a
 
-runOptions (Options True _ _) = evalStateT (runInputT replSettings repl) initReplS
+runOptions (Options True _ _) = runRepl
 runOptions (Options i outf inf) = putStrLn $ tgroom i <> tgroom outf <> tgroom inf
 
 -- ----------------------------------------------------------------------------
 -- REPL
 -- ----------------------------------------------------------------------------
+runRepl :: IO ()
+runRepl = evalStateT (runInputT replSettings repl) initReplS
+
 initReplS :: ReplS
 initReplS = ReplS { parserState = initParserS
+                  , typeEnv     = initTypeEnv
                   }
 
 replSettings :: MonadIO m => Settings m
@@ -98,50 +104,104 @@ replSettings = Settings { historyFile = Just histfile
     where histfile = unsafePerformIO getHomeDirectory ++ "/.technehist" -- Am I a monster?
           -- TODO: I should probably use XDG cache directory
 
-cmds :: [(String, String)]
-cmds = [("quit", "q"),        ("load-module", "lm"), ("load-file", "lf"),
-        ("dump-state", "ds"), ("type","t")]
-
+-- TODO: modularize
 replComplete :: MonadIO m => String -> String -> m [Completion]
 replComplete left_ word = do
     let left = reverse left_
     case left of
-      str
-        | ":load-file " `isPrefixOf` left -> listFiles word
-      (':':_) -> return []
-      "" -> case word of
-              (':':_) -> return $ searchCmds word
-              _ -> return [] -- TODO: code completion
-
+       str
+         | ":load-file " `isPrefixOf` left -> listFiles word
+       (':':_) -> return []
+       "" -> case word of
+               (':':_) -> return $ searchCmds word
+               _ -> return [] -- TODO: code completion
     where searchCmds word = map simpleCompletion
-                              $ filter (word `isPrefixOf`) (map ((":" ++) . fst) cmds)
+                              $ filter (word `isPrefixOf`) (map ((":" ++) . tunpack . head . fst) cmds)
 
 repl :: ReplM ()
 repl = do
-    line <- getInputLine "> "
+    linestr <- getInputLine "> "
+    case sstrip <$> linestr of
+        Nothing         -> repl
+        Just ""         -> repl
+        Just (':':rest) -> let line = tpack rest
+                            in runCommand (getCmd line) (getLine line)
+        Just line       -> runCommand "eval" $ tpack line
+    where getCmd  = fst . cmdLinePair
+          getLine = snd . cmdLinePair
+          cmdLinePair xs = (head $ words xs, unwords $ tail $ words xs)
+
+          cmdMap = concatMap (\(ts, f) -> map (,f) ts) cmds
+          runCommand cmd line = case lookup cmd cmdMap of
+                                  Just cmd -> cmd line
+                                  Nothing  -> outputTextLn "Command not found." >> repl
+
+
+outputText   str = outputStr   (tunpack str)
+outputTextLn str = outputStrLn (tunpack str)
+
+-- ----------------------------------------------------------------------------
+-- REPL commands
+-- ----------------------------------------------------------------------------
+cmds :: [([Text], Text -> ReplM ())]
+cmds = [ (["quit", "q"       ] , \_ -> return ())
+       , (["type", "t"       ] , cmdType        )
+       , (["dump-state", "ds"] , cmdDumpState   )
+       , (["dump-ast", "da"  ] , cmdDumpAst     )
+       , (["dump-file-ast"   ] , cmdDumpAstFile )
+       , (["load-file", "lf" ] , cmdLoadFile    )
+       , (["eval"            ] , cmdDefault     )
+       ]
+
+cmdDumpState, cmdType, cmdDefault, cmdDumpAst :: Text -> ReplM ()
+cmdDumpState _ = groom <$> lift get >>= outputStrLn >> repl
+
+cmdLoadFile line = do
+    let files = swords $ tunpack line
+    modules <- mapM (parseFile parseModule) files
+    forM_ modules (\case
+                      Right (x, pstate) -> printAndUpdateState x pstate
+                      Left y            -> printErrBundle y)
+    repl
+
+cmdType line = do
+    pstate  <- lift $ gets parserState
+    typeenv <- lift $ gets typeEnv
+    case parseExprWithState pstate line of
+      Right (expr, pstate) -> (outputTextLn . tshow . fmap pretty) (inferExpr typeenv expr)
+      Left y               -> printErrBundle y
+    repl
+
+cmdDefault line = do
     pstate <- lift $ gets parserState
-    case sstrip <$> line of
-        Nothing      -> repl
-        Just ""      -> repl
-        Just ":q"    -> return ()
-        Just ":quit" -> return ()
-        Just ":dump-state" -> groom <$> lift (gets parserState) >>= outputStrLn >> repl
-        Just str
-          | ":type " `isPrefixOf` str -> case parseReplWithState pstate (cmdInput str) of
-              Right (x, pstate) -> case x of
-                                     ReplExpr expr -> (outputStrLn . groom) (inferExpr emptyTypeEnv expr) >> repl
-                                     _             -> printAndUpdateState x pstate
-              Left y -> printErrBundle y
-          | ":load-file " `isPrefixOf` str -> do
-              let files = drop 1 $ swords str
-              modules <- mapM (parseFile parseModule) files
-              forM_ modules (\case
-                Right (x, pstate) -> printAndUpdateState x pstate
-                Left y            -> printErrBundle y)
-        Just input -> case parseReplWithState pstate (tpack input) of
-              Right (x, pstate) -> printAndUpdateState x pstate
-              Left y -> printErrBundle y
-    where printErrBundle err = outputStrLn (errorBundlePretty err) >> repl
-          printAndUpdateState x pstate = outputStrLn (groom x) >> updateState pstate
-          updateState pstate = lift (modify (\s -> s { parserState = pstate})) >> repl
-          cmdInput str = unwords . drop 1 . words $ tpack str
+    typeenv <- lift $ gets typeEnv
+    case parseReplWithState pstate line of
+      Right (x, pstate) -> case x of
+        ReplExpr expr -> printAndUpdateState expr pstate
+        ReplDecl decl -> do
+            outputStrLn $ groom decl
+            case inferDecl typeenv decl of
+              Right typeenv -> updateTypeEnv typeenv
+              Left err      -> outputStrLn (groom err)
+            return ()
+        x -> printAndUpdateState x pstate
+      Left y -> printErrBundle y
+    repl
+
+cmdDumpAst = cmdDefault
+cmdDumpAstFile = cmdLoadFile
+
+-- ----------------------------------------------------------------------------
+-- REPL cmd helpers
+-- ----------------------------------------------------------------------------
+printErrBundle :: ParserE -> ReplM ()
+printErrBundle err = outputStrLn (errorBundlePretty err)
+
+printAndUpdateState :: Show a => a -> ParserS -> ReplM ()
+printAndUpdateState x pstate = outputStrLn (groom x) >> Main.updateParserState pstate
+
+updateParserState :: ParserS -> ReplM ()
+updateParserState pstate = lift (modify (\s -> s { parserState = pstate }))
+
+updateTypeEnv :: TypeEnv -> ReplM ()
+updateTypeEnv typeenv = lift (modify (\s -> s { typeEnv = typeenv }))

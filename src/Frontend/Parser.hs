@@ -20,6 +20,7 @@ module Frontend.Parser
     , parseFile
     , parseModule
     , parseReplWithState
+    , parseExprWithState
     ) where
 
 import TechnePrelude
@@ -86,6 +87,7 @@ gparse p input = fst . fromRight' $ parse (runStateT p initParserS) "Test" input
 parseModule = runStateT module_ initParserS
 parseFile p file = runParser p file <$> readFile file
 parseReplWithState state = parse (runStateT repl state) "repl-line"
+parseExprWithState state = parse (runStateT expr state) "repl-line"
 
 repl :: ParserM Repl
 repl = (ReplFixity <$> fixity)
