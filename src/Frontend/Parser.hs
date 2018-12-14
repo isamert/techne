@@ -177,11 +177,17 @@ identifier = lexeme $ try (tpack <$> some alphaNumChar >>= check)
             | w `elem` rwords = fail $ show w ++ " is a keyword and cannot be an identifier."
             | otherwise = return w
 
+caseIdent :: ParserM Char -> ParserM Text
+caseIdent x = lexeme . try $ do
+    ups <- x
+    rest <- try identifier <|> return ""
+    return $ ups `tcons` rest
+
 upcaseIdent :: ParserM Text
-upcaseIdent = lexeme . try $ liftM2 tcons upperChar identifier
+upcaseIdent = caseIdent upperChar
 
 lowcaseIdent :: ParserM Text
-lowcaseIdent = lexeme . try $ liftM2 tcons lowerChar identifier
+lowcaseIdent = caseIdent lowerChar
 
 -- FIXME: needs better definition
 infixIdent :: ParserM Text
@@ -327,9 +333,9 @@ param cnsts = do
 params :: [Constraint] -> ParserM [Param]
 params cnsts = param cnsts `sepBy` comma
 
--- Parse a type parameter, or as I recently taken call type constraint
-typeconst :: ParserM Constraint
-typeconst = TypeConstraint <$> typeparamIdent
+-- Parse a type parameter
+typeconstraint :: ParserM Constraint
+typeconstraint = TypeConstraint <$> typeparamIdent
 
 freshName :: ParserM Text
 freshName = do
@@ -411,8 +417,8 @@ term = when_
          <|> match_
          <|> if_
          <|> lambdaExpr
-         <|> try fnAppl
          <|> try fnCall
+         <|> try fnAppl
          <|> litExpr
          <|> listExpr
          <|> try (parens expr)
@@ -492,17 +498,17 @@ data_ :: ParserM Dat
 data_ = do
     rword "data"
     name <- dataIdent
-    typecnsts <- typeconst `sepBy` comma
+    typecnsts <- typeconstraint `sepBy` comma
     equal
     existentialCnsts <- constraintsWithArrow
     let cnsts = typecnsts ++ existentialCnsts
     base <- try (parens (dataParams cnsts) <* symbol "=>") <|> return []
     datadefs <- sum cnsts
-    return $ Dat name (datadefs `prependBase` base)
+    return $ Dat name typecnsts (datadefs `prependBase` base)
     where sum     cnsts = product cnsts `sepBy1` bar
           product cnsts = liftM2 (,)
               identifier
-              (parens (dataParams cnsts))
+              (try (parens (dataParams cnsts)) <|> return [])
           dataParam cnsts = do
               name <- identifier
               typ  <- colon >> typeWithConstraints cnsts
@@ -517,7 +523,7 @@ concept = do
     rword "concept"
     name <- conceptIdent
     rword "of"
-    tcnst <- typeconst
+    tcnst <- typeconstraint
     reqs <- some ((rword "requires" <|> rword "reqs")
                     >> fnDefWithConstraints [tcnst])
     return $ Concept tcnst reqs

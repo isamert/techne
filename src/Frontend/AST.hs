@@ -63,9 +63,10 @@ data Type
     | UnknownType                 -- Used as placeholder while parsing.
     deriving (Show, Eq, Ord, Data, Typeable)
 
-data Param
-    = Param Pattern Type
-    | DataParam Name Type
+data DataParam = DataParam Name Type
+    deriving (Show, Eq, Data, Typeable)
+
+data Param = Param Pattern Type
     deriving (Show, Eq, Data, Typeable)
 
 data Ref
@@ -109,8 +110,10 @@ data Concept
 
 -- Represents a sum type. If data has only one product type then think like
 -- it's just a product type.
-data Dat = Dat Name [(Name, [Param])] -- Dat DataTypeName [(DataName, [Param])]
-    deriving (Show, Eq, Data, Typeable)
+data Dat = Dat  { datName         :: Name
+                , datTypePrms     :: [Constraint]
+                , datConstructors :: [(Name , [DataParam])]
+                } deriving (Show, Eq, Data, Typeable)
 
 data FnDef
     = FnDef { fnDefName :: Name

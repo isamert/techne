@@ -62,7 +62,6 @@ renameExpr fn@(EFn name prms_ rt expr_ scope) env = do
     expr <- renameExpr expr_ (Map.union currenv env) -- union is left-biased
     return $ EFn name prms rt expr scope
     where renameParams = forM prms_ $ \case
-            (DataParam name typ) -> flip DataParam typ <$> insertCurrEnv name
             (Param ptrn typ) -> flip Param typ <$> renamePattern ptrn
 
 renameExpr (FnApplExpr expr tuple) env =

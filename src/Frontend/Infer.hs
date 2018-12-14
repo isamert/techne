@@ -79,8 +79,8 @@ pattern S a = Forall [] a
 
 pattern Tv a = (TVar (TV a Star))
 
-infixr ->>
 infixr -*>
+infixr ->>
 infixr `isKindOf`
 infixr `TAp`
 
@@ -97,25 +97,22 @@ isKindOf :: Text -> Kind -> IType
 a `isKindOf` b = TCon (TC a b)
 
 -- Type definitions
-tArrow      = "->"      `isKindOf` Star -*> Star -*> Star
-tList       = "[]"      `isKindOf` Star -*> Star
-tTuple2     = "(,)"     `isKindOf` Star -*> Star -*> Star
-tTuple3     = "(,,)"    `isKindOf` Star -*> Star -*> Star -*> Star
-tTuple4     = "(,,,)"   `isKindOf` Star -*> Star -*> Star -*> Star -*> Star
-tTuple5     = "(,,,,)"  `isKindOf` Star -*> Star -*> Star -*> Star -*> Star -*> Star
-tTuple6     = "(,,,,,)" `isKindOf` Star -*> Star -*> Star -*> Star -*> Star -*> Star -*> Star
+tArrow      = "->"  `isKindOf` Star -*> Star -*> Star
+tList       = "[]"  `isKindOf` Star -*> Star
+
+tTuple1 name = name `isKindOf` Star -*> Star
+tTuple2 name = name `isKindOf` Star -*> Star -*> Star
+tTuple3 name = name `isKindOf` Star -*> Star -*> Star -*> Star
+tTuple4 name = name `isKindOf` Star -*> Star -*> Star -*> Star -*> Star
+tTuple5 name = name `isKindOf` Star -*> Star -*> Star -*> Star -*> Star -*> Star
+tTuple6 name = name `isKindOf` Star -*> Star -*> Star -*> Star -*> Star -*> Star -*> Star
 
 -- Polymorphic types that you can apply a type, like [*]
-pArrow       = TAp tArrow
-pList        = TAp tList
-pTuple2      = TAp tTuple2
-pTuple3      = TAp tTuple3
-pTuple4      = TAp tTuple4
-pTuple5      = TAp tTuple5
-pTuple6      = TAp tTuple6
-
--- An example for (int,int):
--- y = pTuple2 (T"int" `TAp` T"int")
+pList                = TAp tList
+pTuple1 name a       = TAp (tTuple1 name) a
+pTuple2 name a b     = TAp (TAp (tTuple2 name) a) b
+pTuple3 name a b c   = TAp (TAp (tTuple3 name) a) (TAp b c)
+pTuple4 name a b c d = TAp (TAp (tTuple4 name) a) (TAp b (TAp c d))
 
 -- ----------------------------------------------------------------------------
 -- typeOf
@@ -241,14 +238,27 @@ letters = [1..] >>= flip replicateM ['a'..'z']
 -- Tuple stuff
 --
 -- FIXME: this should obey the order of the data type (if given)
-fixTupleOrder (IndexedTElem x) = x
-fixTupleOrder (NamedTElem _ x) = x
-selectTupleCons tup = case length tup of
-                        2 -> pTuple2
-                        3 -> pTuple3
-                        4 -> pTuple4
-                        5 -> pTuple5
-                        6 -> pTuple6
+-- Maybe this should be resolved earlier, like in the renamer or in a seperate
+-- desugar phase
+fixTupleOrder :: [TupleElem a] -> [a]
+fixTupleOrder tuple = map extract tuple
+    where extract (IndexedTElem x) = x
+          extract (NamedTElem _ x) = x
+
+applyDataType :: Text -> [IType] -> IType
+applyDataType name [x1]             = pTuple1 name x1
+applyDataType name [x1, x2]         = pTuple2 name x1 x2
+applyDataType name [x1, x2, x3]     = pTuple3 name x1 x2 x3
+applyDataType name [x1, x2, x3, x4] = pTuple4 name x1 x2 x3 x4
+
+applyTuple xs = flip applyDataType xs $
+    case length xs of
+      1 -> error "Tuples cannot have only one element"
+      2 -> "(,)"
+      3 -> "(,,)"
+      4 -> "(,,,)"
+      5 -> "(,,,,)"
+      x -> error "sorry xd"
 
 -- ----------------------------------------------------------------------------
 -- Main functions
@@ -279,6 +289,9 @@ instantiate (Forall as t) = do
 generalize :: TypeEnv -> IType -> Scheme
 generalize env t  = Forall as t
     where as = Set.toList $ ftv t `Set.difference` ftv env
+
+close :: IType -> Scheme
+close ty = normalize $ generalize emptyTypeEnv ty
 
 closeOver :: (Subst, IType) -> Scheme
 closeOver (sub, ty) = normalize sc
@@ -335,11 +348,11 @@ infer env (UnExpr op e1)   = do
 infer env (ETuple tup)
   | null tup || length tup == 1 = throwError NotATuple
   | otherwise = do
-      let ordered = map fixTupleOrder tup
-      i <- mapM (infer env) ordered
-      let app = foldr1 TAp (map snd i)
-      let subs = foldr1 composeSubst (map fst i)
-      return (subs, selectTupleCons ordered app)
+      let ordered = fixTupleOrder tup
+      typs <- mapM (infer env) ordered
+      let subs = foldr1 composeSubst (map fst typs)
+      let returntyp = applyTuple (map (\t -> apply subs $ snd t) typs)
+      return (subs, returntyp)
 
 infer env (EList l)
   | null l = fresh Star >>= \t -> return (emptySubst, pList t)
@@ -354,10 +367,8 @@ infer env (EList l)
 
 infer env (FnApplExpr expr (Tuple tuple)) = do
     (s1, t1) <- infer env expr
-    (s2, t2) <- inferPrim (apply s1 env) (map fixOrder tuple) t1
+    (s2, t2) <- inferPrim (apply s1 env) (fixTupleOrder tuple) t1
     return (s2 `composeSubst` s1, t2)
-    where fixOrder (IndexedTElem expr) = expr
-          fixOrder (NamedTElem _ expr) = expr -- FIXME: parser/fnAppl
 
 -- FIXME: (fn [[1], [a]] -> a) => can't infer a
 infer env (EFn name prms rt body scope) = do
@@ -384,11 +395,11 @@ infer env (EFn name prms rt body scope) = do
           inferPattern (TuplePattern name (Tuple t))
             | length t < 2 = throwError NotATuple
             | otherwise = do
-                let ordered = map fixTupleOrder t
+                let ordered = fixTupleOrder t
                 i <- mapM inferPattern ordered
-                let app = foldr1 TAp (map (snd . fst) i)
-                return ((name, selectTupleCons ordered app), concatMap (uncurry (:)) i)
-          inferPattern (ListPattern name (List l)) -- from now on, it's just a shitshow :(
+                let returntyp = applyTuple $ map (snd . fst) i
+                return ((name, returntyp), concatMap (uncurry (:)) i)
+          inferPattern (ListPattern name (List l)) -- from now on, it's just a shitshow (and still not working properly) :(
             | null l = fresh Star >>= \t -> return ((name, pList t), [])
             | otherwise = do
                 firstp@((_, firstelemtyp), subtyps) <- inferPattern (head l)
@@ -403,6 +414,16 @@ infer env (EFn name prms rt body scope) = do
                              _ -> unifiedtyps
                     alltyps     = concatMap (uncurry (:)) unifiedfixed ++ subtyps
                 return ((name, pList t), alltyps)
+          inferPattern (UnpackPattern name typname (Tuple tuple)) = do
+              tv <- fresh Star
+              (s1, t1) <- lookupEnv env typname
+              (t', subtyps) <- foldM inferStep (id, []) (fixTupleOrder tuple)
+              s2 <- unify (t' tv) t1
+              let rettype = (apply s2 tv) -- FIXME: check if fully applied somehow
+              return ((name, rettype), [])
+              where inferStep (t, subptrns) exp = do
+                      ((_, t'), subptrns') <- inferPattern exp
+                      return (t . (t' ->>), subptrns ++ subptrns')
 
           scheme2itype (Forall _ itype) = itype
           filterNamedAndGeneralize xs =
@@ -429,4 +450,19 @@ inferDecl :: TypeEnv -> Decl -> Either InferE TypeEnv
 inferDecl env (FnDecl fn@(Fn (Just name) _ _ _ _)) =
     (\scheme -> extendTypeEnv env (name,scheme)) <$> inferExpr env (FnExpr fn)
 
+inferDecl env (DataDecl dat@(Dat name vars datapairs)) =
+    Right $ extendTypeEnvAll env constructorTypes
+    where constructorTypes = map (inferDataCons name vars) datapairs
+
 inferDecl _ decl = Left $ NotAnExpression decl
+
+-- FIXME: this only produces rank-1 kind. To produce rank-n kinds
+-- I probably need to look inside the data definition and infer from there.
+inferDataCons typname typvars (name, params) =
+    (name, close $ foldr (\param typ -> param2type param ->> typ) (returnType typvars)  params)
+        where param2type (DataParam paramname (ConcreteType typname)) = T typname
+              param2type (DataParam paramname (ConstraintType typname)) = Tv typname
+              nameOfConstraint (TypeConstraint name) = name
+
+              returnType xs = applyDataType typname (map (Tv . nameOfConstraint) xs)
+
