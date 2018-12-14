@@ -145,7 +145,8 @@ outputTextLn str = outputStrLn (tunpack str)
 -- ----------------------------------------------------------------------------
 cmds :: [([Text], Text -> ReplM ())]
 cmds = [ (["quit", "q"       ] , \_ -> return ())
-       , (["type", "t"       ] , cmdType        )
+       , (["type", "t"       ] , cmdType False  )
+       , (["dump-type"       ] , cmdType True   )
        , (["dump-state", "ds"] , cmdDumpState   )
        , (["dump-ast", "da"  ] , cmdDumpAst     )
        , (["dump-file-ast"   ] , cmdDumpAstFile )
@@ -153,7 +154,7 @@ cmds = [ (["quit", "q"       ] , \_ -> return ())
        , (["eval"            ] , cmdDefault     )
        ]
 
-cmdDumpState, cmdType, cmdDefault, cmdDumpAst :: Text -> ReplM ()
+cmdDumpState, cmdDefault, cmdDumpAst :: Text -> ReplM ()
 cmdDumpState _ = groom <$> lift get >>= outputStrLn >> repl
 
 cmdLoadFile line = do
@@ -162,14 +163,6 @@ cmdLoadFile line = do
     forM_ modules (\case
                       Right (x, pstate) -> printAndUpdateState x pstate
                       Left y            -> printErrBundle y)
-    repl
-
-cmdType line = do
-    pstate  <- lift $ gets parserState
-    typeenv <- lift $ gets typeEnv
-    case parseExprWithState pstate line of
-      Right (expr, pstate) -> (outputTextLn . tshow . fmap pretty) (inferExpr typeenv expr)
-      Left y               -> printErrBundle y
     repl
 
 cmdDefault line = do
@@ -190,6 +183,18 @@ cmdDefault line = do
 
 cmdDumpAst = cmdDefault
 cmdDumpAstFile = cmdLoadFile
+
+
+cmdType :: Bool -> Text -> ReplM ()
+cmdType dump line = do
+    pstate  <- lift $ gets parserState
+    typeenv <- lift $ gets typeEnv
+    case parseExprWithState pstate line of
+      Right (expr, pstate) -> if dump
+                                 then (outputTextLn . tshow ) (inferExpr typeenv expr)
+                                 else (outputTextLn . tshow . fmap pretty) (inferExpr typeenv expr)
+      Left y               -> printErrBundle y
+    repl
 
 -- ----------------------------------------------------------------------------
 -- REPL cmd helpers

@@ -82,7 +82,6 @@ getFnReturnType fnname = (lastSafe =<<) <$> getFnSignature fnname
 -- ----------------------------------------------------------------------------
 testParser p = parseTest (runStateT p initParserS)
 tparse p = parse (runStateT p initParserS)
-gparse p input = fst . fromRight' $ parse (runStateT p initParserS) "Test" input
 
 parseModule = runStateT module_ initParserS
 parseFile p file = runParser p file <$> readFile file
@@ -411,24 +410,24 @@ term :: ParserM Expr
 term = when_
          <|> match_
          <|> if_
+         <|> lambdaExpr
          <|> try fnAppl
          <|> try fnCall
          <|> litExpr
          <|> listExpr
          <|> try (parens expr)
          <|> tupleExpr
-         <|> lambdaExpr
          <|> refExpr
 
 fnCallTerm :: ParserM Expr
 fnCallTerm = when_
               <|> match_
               <|> if_
+              <|> lambdaExpr
               <|> try fnAppl
               <|> litExpr
               <|> listExpr
               <|> tupleExpr
-              <|> lambdaExpr
               <|> refExpr
 
 -- FIXME: match_ if_ when_ fnCall may also return a lambda

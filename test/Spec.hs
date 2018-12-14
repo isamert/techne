@@ -4,36 +4,36 @@ import Test.HUnit
 import Text.Megaparsec
 import Control.Monad.State.Lazy
 
-import Frontend
 import Frontend.AST
-import qualified Frontend.Lexer as L
-import qualified Frontend.Parser as P
+import Frontend.Parser
+import Frontend.Infer
 
---
--- Utility
---
-runp p = parse (runStateT p initTState) "Tests"
-
--- | Test utility for functions that has nothing to do with state
-pAssertStateless name p input eq = TestCase $ assertEqual name
-    (case runp p input of
-       Right a -> a
-       Left a  -> error "I'm a cute little error.") (eq, initTState)
-
---
--- Lexer tests
---
-test1 = pAssertStateless "L.infixId"
-                         L.infixId
-                         "<>"
-                         "<>"
-
-lexerTests = TestList [TestLabel "Lexer tests" test1]
+main = runTestTT inferTests
 
 
---
--- Parser tests
---
+-- ----------------------------------------------------------------------------
+-- Inference tests
+-- ----------------------------------------------------------------------------
 
+testInfer name exp typ = TestLabel name $ TestCase $ assertEqual name
+                                      (inferExpr emptyTypeEnv $ gparse expr exp)
+                                      (Right $ generalize emptyTypeEnv typ)
 
-main = runTestTT lexerTests
+inferTests = TestList
+  [ testInfer "id" "(fn a -> a)" (Tv"a" ->> Tv"a")
+  , testInfer "parameter" "(fn a@3 -> a)" (T"int" ->> T"int")
+  , testInfer "list parameter 1" "(fn [a,1] -> a)" (pList (T"int") ->> T"int")
+  , testInfer "list parameter 2" "(fn [a,2,b] -> fn c -> [a,b,c])" (pList (T"int") ->> T"int" ->> pList (T"int"))
+  , testInfer "list parameter 3" "(fn [a,b,2] -> fn c -> [a,b,c])" (pList (T"int") ->> T"int" ->> pList (T"int"))
+  , testInfer "list" "(fn a -> [1,a])" (T"int" ->> pList (T"int"))
+  , testInfer "fst" "(fn (a,b) -> a)" (pTuple2 (Tv"a" `TAp` Tv"b") ->> Tv"a")
+  , testInfer "snd" "(fn (a,b) -> b)" (pTuple2 (Tv"a" `TAp` Tv"b") ->> Tv"b")
+  , testInfer "tuple param" "(fn (a@2,b) -> a)" (pTuple2 (T"int" `TAp` Tv"a") ->> T"int")
+  , testInfer "tuple param 2" "(fn (a,b@[1,2]) -> b)" (pTuple2 (Tv"a" `TAp` pList (T"int")) ->> pList (T"int"))
+  ]
+
+-- ----------------------------------------------------------------------------
+-- Test utils
+-- ----------------------------------------------------------------------------
+
+gparse p input = fst . fromRight' $ parse (runStateT p initParserS) "Test" input

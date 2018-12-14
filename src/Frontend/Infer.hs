@@ -1,7 +1,10 @@
 module Frontend.Infer
-    ( inferExpr
+    ( -- Functions
+      inferExpr
     , inferDecl
     , initTypeEnv
+    , emptyTypeEnv
+    -- Data
     , TypeEnv(..)
     , Subst(..)
     , IType(..)
@@ -9,6 +12,14 @@ module Frontend.Infer
     , TVar(..)
     , TCon(..)
     , Kind(..)
+    -- Utils
+    , generalize
+    , pattern Tv
+    , pattern T
+    , pattern S
+    , (->>)
+    , pList
+    , pTuple2
     ) where
 
 import TechnePrelude
@@ -42,12 +53,15 @@ data IType
     | TAp  IType IType
     deriving (Show, Eq, Ord)
 
+pattern NotATuple = OtherError "Tuples can not have one element."
 data InferE
     = UnboundVariable Text
     | UnificationFail IType IType
     | InfiniteType TVar IType
     | KindMismatch TVar IType
-    deriving (Show, Eq, Ord)
+    | NotAnExpression Decl
+    | OtherError Text
+    deriving (Show, Eq)
 
 newtype TypeEnv = TypeEnv (Map.Map Name Scheme) deriving (Show, Eq, Ord)
 newtype InferS = InferS { counter :: Int }
@@ -222,6 +236,20 @@ composeSubst s1 s2 = Map.map (apply s1) s2 `Map.union` s1
 -- Only used while normalizing.
 letters :: [String]
 letters = [1..] >>= flip replicateM ['a'..'z']
+
+--
+-- Tuple stuff
+--
+-- FIXME: this should obey the order of the data type (if given)
+fixTupleOrder (IndexedTElem x) = x
+fixTupleOrder (NamedTElem _ x) = x
+selectTupleCons tup = case length tup of
+                        2 -> pTuple2
+                        3 -> pTuple3
+                        4 -> pTuple4
+                        5 -> pTuple5
+                        6 -> pTuple6
+
 -- ----------------------------------------------------------------------------
 -- Main functions
 -- ----------------------------------------------------------------------------
@@ -305,21 +333,13 @@ infer env (UnExpr op e1)   = do
     inferPrim env [e1] typ
 
 infer env (ETuple tup)
-  | null tup || length tup == 1 = error "The fuck?"
+  | null tup || length tup == 1 = throwError NotATuple
   | otherwise = do
-      let ordered = map fixOrder tup
+      let ordered = map fixTupleOrder tup
       i <- mapM (infer env) ordered
       let app = foldr1 TAp (map snd i)
       let subs = foldr1 composeSubst (map fst i)
       return (subs, selectTupleCons ordered app)
-    where fixOrder (IndexedTElem expr) = expr
-          fixOrder (NamedTElem _ expr) = expr
-          selectTupleCons tup = case length tup of
-                                  2 -> pTuple2
-                                  3 -> pTuple3
-                                  4 -> pTuple4
-                                  5 -> pTuple5
-                                  6 -> pTuple6
 
 infer env (EList l)
   | null l = fresh Star >>= \t -> return (emptySubst, pList t)
@@ -335,48 +355,61 @@ infer env (EList l)
 infer env (FnApplExpr expr (Tuple tuple)) = do
     (s1, t1) <- infer env expr
     (s2, t2) <- inferPrim (apply s1 env) (map fixOrder tuple) t1
-    return $ (s2 `composeSubst` s1, t2)
+    return (s2 `composeSubst` s1, t2)
     where fixOrder (IndexedTElem expr) = expr
           fixOrder (NamedTElem _ expr) = expr -- FIXME: parser/fnAppl
 
+-- FIXME: (fn [[1], [a]] -> a) => can't infer a
 infer env (EFn name prms rt body scope) = do
-    ps <- mapM (\(Param ptrn typ) -> inferPattern ptrn) prms
-    let paramtyps = concat ps
-        env'      = env `extendTypeEnvAll` (onlyNamed paramtyps)
+    p <- mapM (\(Param ptrn typ) -> inferPattern ptrn) prms
+    let paramtyps = concatMap (uncurry (:)) p
+        env'      = env `extendTypeEnvAll` filterNamedAndGeneralize paramtyps
     (s1, t1) <- infer env' body
-    let paramts = apply s1 (map (scheme2itype . snd) paramtyps)
+    let p2 = map fst p
+        paramts = apply s1 (map snd p2)
     let rtype = foldr (->>) t1 paramts
     return (s1,  rtype)
-    where inferPattern (BindPattern name) = do
-            fresh Star >>= \tvar -> return [(Just name, Forall [] tvar)]
-          inferPattern (ElsePattern name) = do
-            fresh Star >>= \tvar -> return [(name, Forall [] tvar)]
-          inferPattern (RestPattern name) = do
-            fresh Star >>= \tvar -> return [(name, Forall [] (pList tvar))]
-          inferPattern (RegexPattern name _) = do
-            fresh Star >>= \tvar -> return [(name, Forall [] (T"string"))]
+    where inferPattern :: Pattern -> InferM ((Maybe Name, IType), [(Maybe Name, IType)])
+          inferPattern (BindPattern name) =
+            fresh Star >>= \tvar -> return ((Just name, tvar), [])
+          inferPattern (ElsePattern name) =
+            fresh Star >>= \tvar -> return ((name, tvar),[])
+          inferPattern (RestPattern name) =
+            fresh Star >>= \tvar -> return ((name, tvar), [])
+          inferPattern (RegexPattern name _) =
+            fresh Star >>= \tvar -> return ((name, T"string"), [])
           inferPattern (LitPattern name lit) = do
               (s, t) <- infer emptyTypeEnv (LitExpr lit)
-              return [(name, generalize emptyTypeEnv t)]
-          inferPattern (ListPattern name (List l))
-            | null l = fresh Star >>= \t -> return [(name, Forall [] (pList t))]
-            {-| otherwise = do
-                i <- inferPattern emptyTypeEnv (head l)
-                p <- mapM (inferPattern emptyTypeEnv) (tail l)
-                (s, t) <- foldrM unifyList i p
-                return (name, apply s (pList t))
-              where unifyList (_, t) (_, t') = do
-                      s2 <- unify t' t
-                      return (, apply s2 t)
-            -}
+              return ((name, t), [])
+          inferPattern (TuplePattern name (Tuple t))
+            | length t < 2 = throwError NotATuple
+            | otherwise = do
+                let ordered = map fixTupleOrder t
+                i <- mapM inferPattern ordered
+                let app = foldr1 TAp (map (snd . fst) i)
+                return ((name, selectTupleCons ordered app), concatMap (uncurry (:)) i)
+          inferPattern (ListPattern name (List l)) -- from now on, it's just a shitshow :(
+            | null l = fresh Star >>= \t -> return ((name, pList t), [])
+            | otherwise = do
+                firstp@((_, firstelemtyp), subtyps) <- inferPattern (head l)
+                p <- mapM inferPattern (tail l)
+                (s,t) <- foldrM (\((x,t'),y) (subst, t) -> do
+                    s <- unify t t'
+                    return (s `composeSubst` subst, apply s t'))
+                    (emptySubst, firstelemtyp) (firstp:p)
+                let unifiedtyps = map (\((x,t'),y) -> ((x, apply s t'),y)) (firstp:p)
+                    unifiedfixed = case last l of
+                             (RestPattern name) -> init unifiedtyps ++ [(\((x,t'),y) -> ((x, pList t'), y)) (last unifiedtyps)]
+                             _ -> unifiedtyps
+                    alltyps     = concatMap (uncurry (:)) unifiedfixed ++ subtyps
+                return ((name, pList t), alltyps)
 
           scheme2itype (Forall _ itype) = itype
-
-          onlyNamed xs = map (\(a,b) -> (fromJust a, b)) $ filter filterNameless xs
-          filterNameless (Just a, _) = True
-          filterNameless (Nothing, _) = False
-
-
+          filterNamedAndGeneralize xs =
+              map (\(a,b) -> (fromJust a, Forall [] b))
+                $ filter filterNamed xs
+          filterNamed (Just a, _) = True
+          filterNamed (Nothing, _) = False
 
 -- ----------------------------------------------------------------------------
 -- Runners
@@ -395,3 +428,5 @@ inferModule = undefined
 inferDecl :: TypeEnv -> Decl -> Either InferE TypeEnv
 inferDecl env (FnDecl fn@(Fn (Just name) _ _ _ _)) =
     (\scheme -> extendTypeEnv env (name,scheme)) <$> inferExpr env (FnExpr fn)
+
+inferDecl _ decl = Left $ NotAnExpression decl
