@@ -160,7 +160,7 @@ signedInteger = L.signed spaceConsumer integer
 -- TODO: needs to be updated
 rwords :: [Text]
 rwords = ["if", "then", "else", "elif", "skip", "return", "and", "is",
-           "let", "or", "while", "when", "use", "from", "data"]
+           "let", "or", "while", "when", "use", "from", "data", "fn"]
 
 -- | Parses given reserved word.
 -- rword "if"
@@ -437,9 +437,13 @@ fnCallTerm = when_
               <|> tupleExpr
               <|> refExpr
 
--- FIXME: match_ if_ when_ fnCall may also return a lambda
+-- FIXME: fnCall may also return a lambda
 fnApplTerm :: ParserM Expr
-fnApplTerm =  refExpr <|> parens lambdaExpr
+fnApplTerm =  refExpr
+                <|> parens lambdaExpr
+                <|> parens if_
+                <|> parens when_
+                <|> parens match_
 
 -- ----------------------------------------------------------------------------
 -- Local exprs
