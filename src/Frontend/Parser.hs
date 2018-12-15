@@ -201,7 +201,7 @@ genericIdent :: ParserM Text
 genericIdent = lexeme . try $ char '~' >> identifier
 
 dataIdent :: ParserM Text
-dataIdent = upcaseIdent
+dataIdent = identifier
 
 conceptIdent :: ParserM Text
 conceptIdent = upcaseIdent
@@ -391,7 +391,7 @@ fnAppl = liftM2 FnApplExpr
 
 fnCall :: ParserM Expr
 fnCall = do
-    first <- try (parens expr) <|> fnCallTerm
+    first <- fnCallTerm
     pairs <- many $ try (liftM2 (,) (dot <|> oper) fnAppl)
     foldlM concatFn first pairs
     where concatFn (TupleExpr tuple) (".", fnappl) =
@@ -416,9 +416,9 @@ term :: ParserM Expr
 term = when_
          <|> match_
          <|> if_
-         <|> lambdaExpr
          <|> try fnCall
          <|> try fnAppl
+         <|> lambdaExpr
          <|> litExpr
          <|> listExpr
          <|> try (parens expr)
@@ -429,10 +429,11 @@ fnCallTerm :: ParserM Expr
 fnCallTerm = when_
               <|> match_
               <|> if_
-              <|> lambdaExpr
               <|> try fnAppl
+              <|> lambdaExpr
               <|> litExpr
               <|> listExpr
+              <|> try (parens expr)
               <|> tupleExpr
               <|> refExpr
 
@@ -462,9 +463,12 @@ when_ :: ParserM Expr
 when_ = do
     rword "when"
     predicate <- Just <$> try (expr <* rword "is") <|> return Nothing
-    pairs <- liftM2 (,) expr (wArrow >> expr) `sepBy` comma
+    pairs <- liftM2 (,) (stuff predicate) (wArrow >> expr) `sepBy` comma
     rword "end"
-    return $ WhenExpr predicate pairs
+    return $ WhenExpr pairs
+    where stuff pred = case pred of
+                         Just x  -> fmap (mkEqCheck x) expr
+                         Nothing -> expr
 
 match_ :: ParserM Expr
 match_ = do
@@ -487,7 +491,7 @@ if_ = do
         true <- rword "then" >> expr
         return (pred, true)
     els <- rword "else" >> expr
-    return $ WhenExpr (Just test) ((mkBool True, true) : pairs)
+    return $ WhenExpr ((test, true) : pairs)
 
 -- ----------------------------------------------------------------------------
 -- Top lvl stuff

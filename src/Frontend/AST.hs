@@ -27,8 +27,7 @@ data Repl
 -- Main stuff
 -- ----------------------------------------------------------------------------
 data Expr
-    = WhenExpr   { whenTest  :: Maybe Expr
-                 , whenCases :: [(Expr, Expr)]
+    = WhenExpr   { whenCases :: [(Expr, Expr)]
                  }
     | MatchExpr  { matchTest  :: Expr
                  , matchCases :: [(Pattern, Expr)]
@@ -144,7 +143,6 @@ data Lit
     | IntLit  Integer
     | FltLit  Double
     | FracLit Rational
-    | BoolLit Bool
     deriving (Show, Eq, Typeable, Data)
 
 newtype Tuple a
@@ -197,9 +195,11 @@ prependFnAppl fnAppl expr = fnAppl { fnApplTuple = fnApplTuple fnAppl `prependTu
 -- ----------------------------------------------------------------------------
 -- mk/mks (s for simple) (These are generally for expressions)
 -- ----------------------------------------------------------------------------
+mksParam :: Text -> Type -> Param
 mksParam name = Param (BindPattern name)
+
+mksRef :: Text -> Expr
 mksRef name = RefExpr $ Ref name UnknownType
-mkBool x = LitExpr (BoolLit x)
 
 mkLambda :: [Param] -> Expr -> Expr
 mkLambda prms body = FnExpr $
@@ -212,6 +212,13 @@ mkLambda prms body = FnExpr $
 mkTuple :: [a] -> Tuple a
 mkTuple xs = Tuple $ map IndexedTElem xs
 
+
+mkEqCheck :: Expr -> Expr -> Expr
+mkEqCheck = BinExpr (BinOp "==")
+
+-- ----------------------------------------------------------------------------
+-- Predefined patterns for easy access
+-- ----------------------------------------------------------------------------
 pattern EUnary  name expr            = UnExpr    (UnOp    name) expr
 pattern EBinary name exprl exprr     = BinExpr   (BinOp   name) exprl exprr
 pattern EList   x                    = ListExpr  (List       x)
@@ -221,6 +228,5 @@ pattern EStr    x                    = LitExpr   (StrLit     x)
 pattern EInt    x                    = LitExpr   (IntLit     x)
 pattern EFlt    x                    = LitExpr   (FltLit     x)
 pattern EFrac   x                    = LitExpr   (FracLit    x)
-pattern EBool   x                    = LitExpr   (BoolLit    x)
 pattern ERef name typ                = RefExpr   (Ref name typ)
 pattern EFn name prms rt body scope  = FnExpr (Fn name prms rt body scope)

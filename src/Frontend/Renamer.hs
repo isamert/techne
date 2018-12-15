@@ -78,10 +78,9 @@ renameExpr (MatchExpr test cases) env = do
             e <- renameExpr expr (Map.union currenv env)
             return (p, e)
 
-renameExpr (WhenExpr test cases) env = do
-    t  <- mapM (`renameExpr` env) test
+renameExpr (WhenExpr cases) env = do
     cs <- mapM renameCase cases
-    return $ WhenExpr t cs
+    return $ WhenExpr cs
     where renameCase (expr1, expr2) = do
             e1 <- renameExpr expr1 env
             e2 <- renameExpr expr2 env

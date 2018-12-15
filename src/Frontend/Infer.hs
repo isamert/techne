@@ -114,6 +114,13 @@ pTuple2 name a b     = TAp (TAp (tTuple2 name) a) b
 pTuple3 name a b c   = TAp (TAp (tTuple3 name) a) (TAp b c)
 pTuple4 name a b c d = TAp (TAp (tTuple4 name) a) (TAp b (TAp c d))
 
+applyDataType :: Text -> [IType] -> IType
+applyDataType name []               = name `isKindOf` Star
+applyDataType name [x1]             = pTuple1 name x1
+applyDataType name [x1, x2]         = pTuple2 name x1 x2
+applyDataType name [x1, x2, x3]     = pTuple3 name x1 x2 x3
+applyDataType name [x1, x2, x3, x4] = pTuple4 name x1 x2 x3 x4
+
 -- ----------------------------------------------------------------------------
 -- typeOf
 -- ----------------------------------------------------------------------------
@@ -134,6 +141,9 @@ instance Typed Op where
     typeOf (BinOp   "*.")  = return $ T"float" ->> T"float" ->> T"float"
     typeOf (BinOp   "/.")  = return $ T"float" ->> T"float" ->> T"float"
 
+    -- eq ops
+    typeOf (BinOp   "==")  = instantiate $ Forall [TV "a" Star] (Tv"a" ->> Tv"a" ->> T"bool")
+
     -- list ops
     typeOf (BinOp  "++") =
         instantiate $ Forall [TV "a" Star] (gList ->> gList ->> gList)
@@ -145,7 +155,6 @@ instance Typed Lit where
     typeOf (IntLit  _) = return $ T"int"
     typeOf (FltLit  _) = return $ T"float"
     typeOf (FracLit _) = return $ T"frac"
-    typeOf (BoolLit _) = return $ T"bool"
 
 initTypeEnv :: TypeEnv
 initTypeEnv = TypeEnv $ Map.fromList
@@ -244,12 +253,6 @@ fixTupleOrder :: [TupleElem a] -> [a]
 fixTupleOrder tuple = map extract tuple
     where extract (IndexedTElem x) = x
           extract (NamedTElem _ x) = x
-
-applyDataType :: Text -> [IType] -> IType
-applyDataType name [x1]             = pTuple1 name x1
-applyDataType name [x1, x2]         = pTuple2 name x1 x2
-applyDataType name [x1, x2, x3]     = pTuple3 name x1 x2 x3
-applyDataType name [x1, x2, x3, x4] = pTuple4 name x1 x2 x3 x4
 
 applyTuple xs = flip applyDataType xs $
     case length xs of
@@ -351,7 +354,7 @@ infer env (ETuple tup)
       let ordered = fixTupleOrder tup
       typs <- mapM (infer env) ordered
       let subs = foldr1 composeSubst (map fst typs)
-      let returntyp = applyTuple (map (\t -> apply subs $ snd t) typs)
+      let returntyp = applyTuple (map (apply subs . snd) typs)
       return (subs, returntyp)
 
 infer env (EList l)
@@ -369,6 +372,27 @@ infer env (FnApplExpr expr (Tuple tuple)) = do
     (s1, t1) <- infer env expr
     (s2, t2) <- inferPrim (apply s1 env) (fixTupleOrder tuple) t1
     return (s2 `composeSubst` s1, t2)
+
+infer env (WhenExpr cases) = do
+    tv <- fresh Star
+    foldM inferCase (emptySubst, tv) cases
+    where inferCase (subst, r') (c, r) = do
+            (s1, t1) <- infer env c
+            (s2, t2) <- infer env r
+            s3 <- unify t1 (T"bool")
+            s4 <- unify t2 r'
+            return (s4 `composeSubst` s3 `composeSubst` s2 `composeSubst` s1, apply s4 t2)
+
+infer env (MatchExpr test cases) = do
+    tv <- fresh Star
+    (subst, testtyp) <- infer env test
+    foldM (inferCase testtyp) (emptySubst, tv) cases
+    where inferCase testtyp (subst, r') (ptrn, r) = do
+            ((name, t1), subtyps) <- inferPattern ptrn
+            (s2, t2) <- infer env r
+            s3 <- unify t1 testtyp
+            s4 <- unify t2 r'
+            return (s4 `composeSubst` s3 `composeSubst` s2, apply s4 t2)
 
 -- FIXME: (fn [[1], [a]] -> a) => can't infer a
 infer env (EFn name prms rt body scope) = do
@@ -419,7 +443,7 @@ infer env (EFn name prms rt body scope) = do
               (s1, t1) <- lookupEnv env typname
               (t', subtyps) <- foldM inferStep (id, []) (fixTupleOrder tuple)
               s2 <- unify (t' tv) t1
-              let rettype = (apply s2 tv) -- FIXME: check if fully applied somehow
+              let rettype = apply s2 tv -- FIXME: check if fully applied somehow
               return ((name, rettype), [])
               where inferStep (t, subptrns) exp = do
                       ((_, t'), subptrns') <- inferPattern exp
@@ -465,4 +489,3 @@ inferDataCons typname typvars (name, params) =
               nameOfConstraint (TypeConstraint name) = name
 
               returnType xs = applyDataType typname (map (Tv . nameOfConstraint) xs)
-
