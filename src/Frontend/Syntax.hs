@@ -1,7 +1,7 @@
 {-# LANGUAGE DeriveFunctor              #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DeriveDataTypeable         #-}
-module Frontend.AST where
+module Frontend.Syntax where
 
 import TechnePrelude
 
@@ -26,6 +26,7 @@ data Repl
 -- ----------------------------------------------------------------------------
 -- Main stuff
 -- ----------------------------------------------------------------------------
+
 data Expr
     = WhenExpr   { whenCases :: [(Expr, Expr)]
                  }
@@ -50,6 +51,7 @@ data Expr
 -- ----------------------------------------------------------------------------
 -- Parameters and related stuff
 -- ----------------------------------------------------------------------------
+
 data Constraint
     = ConceptConstraint Name ConceptName -- A a => a
     | TypeConstraint Name                -- concept X of a
@@ -93,6 +95,7 @@ data Pattern
 -- ----------------------------------------------------------------------------
 -- Module related stuff
 -- ----------------------------------------------------------------------------
+
 data Import = Import [Path] [Name] -- from Some.Module use Foo, Bar;
     deriving (Show, Eq, Data, Typeable)
 
@@ -137,6 +140,7 @@ data Fixity
 -- ----------------------------------------------------------------------------
 -- Primitives
 -- ----------------------------------------------------------------------------
+
 data Lit
     = ChrLit  Char
     | StrLit  Text
@@ -174,6 +178,7 @@ data Fn
 -- ----------------------------------------------------------------------------
 -- Instances
 -- ----------------------------------------------------------------------------
+
 instance Semigroup Expr where
     (TupleExpr e1) <> (TupleExpr e2) = TupleExpr (e1 <> e2)
     (ListExpr  e1) <> (ListExpr  e2) = ListExpr  (e1 <> e2)
@@ -182,6 +187,7 @@ instance Semigroup Expr where
 -- ----------------------------------------------------------------------------
 -- utility functions
 -- ----------------------------------------------------------------------------
+
 isBindPattern (BindPattern _ ) = True
 
 lookupConstraints typ =
@@ -195,6 +201,7 @@ prependFnAppl fnAppl expr = fnAppl { fnApplTuple = fnApplTuple fnAppl `prependTu
 -- ----------------------------------------------------------------------------
 -- mk/mks (s for simple) (These are generally for expressions)
 -- ----------------------------------------------------------------------------
+
 mksParam :: Text -> Type -> Param
 mksParam name = Param (BindPattern name)
 
@@ -219,6 +226,7 @@ mkEqCheck = BinExpr (BinOp "==")
 -- ----------------------------------------------------------------------------
 -- Predefined patterns for easy access
 -- ----------------------------------------------------------------------------
+
 pattern EUnary  name expr            = UnExpr    (UnOp    name) expr
 pattern EBinary name exprl exprr     = BinExpr   (BinOp   name) exprl exprr
 pattern EList   x                    = ListExpr  (List       x)

@@ -1,7 +1,7 @@
 module Frontend.Desugar (desugar) where
 
 import TechnePrelude
-import Frontend.AST
+import Frontend.Syntax
 import Frontend.Parser
 
 import Data.Generics.Uniplate.Data
@@ -21,6 +21,7 @@ renamePHs = transform renamer
 -- ----------------------------------------------------------------------------
 -- Individual desugarers
 -- ----------------------------------------------------------------------------
+
 phToFnChildren = phToFn children
 phToFnUniverse = phToFn universe
 phToFn f expr = phToFn' $ collectPHs expr
@@ -53,6 +54,7 @@ binExprPHtoFn x = descend binExprPHtoFn x
 -- ----------------------------------------------------------------------------
 -- Helpers
 -- ----------------------------------------------------------------------------
+
 -- | Turn a PlaceHolder into a Param.
 phToParam :: Ref -> Param
 phToParam (PlaceHolder n) = mksParam ("$" ++ tshow n) UnknownType

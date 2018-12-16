@@ -1,7 +1,7 @@
 module Frontend.Renamer where
 
 import TechnePrelude
-import Frontend.AST
+import Frontend.Syntax
 import Frontend.Parser
 
 import Data.Generics.Uniplate.Data
@@ -30,6 +30,7 @@ type RenamerM a  = ExceptT RenamerE (State RenamerS) a
 -- ----------------------------------------------------------------------------
 -- Toplvl renamers
 -- ----------------------------------------------------------------------------
+
 renameModule :: Module -> GenEnv -> RenamerM Module
 renameModule (Module imports decls) env = do
     gdecls <- resetCurrEnv >> mapM renameFnNames decls
@@ -46,6 +47,7 @@ renameModule (Module imports decls) env = do
 -- ----------------------------------------------------------------------------
 -- renameExpr
 -- ----------------------------------------------------------------------------
+
 -- TODO: rename PlaceHolders too
 renameExpr :: Expr -> GenEnv -> RenamerM Expr
 renameExpr (ERef name typ) env = do
@@ -98,17 +100,16 @@ renameExpr x _ = return x
 -- ----------------------------------------------------------------------------
 -- Individual renamers
 -- ----------------------------------------------------------------------------
+
 renameFreeVar :: Name -> GenEnv -> RenamerM GenName
 renameFreeVar name env =
     case Map.lookup name env of
       Just gname -> return gname
       Nothing    -> throwError (NotAssigned name)
 
-
 renameOp :: Op -> GenEnv -> RenamerM Op
 renameOp (BinOp name) env = BinOp <$> renameFreeVar name env
 renameOp (UnOp  name) env = UnOp <$> renameFreeVar name env
-renameOp op        _   = return op
 
 renamePattern :: Pattern -> RenamerM Pattern
 renamePattern (BindPattern name) = BindPattern <$> insertCurrEnv name
@@ -131,6 +132,7 @@ renameList f (List xs) = List <$> mapM f xs
 -- ----------------------------------------------------------------------------
 -- RenamerM utility
 -- ----------------------------------------------------------------------------
+
 initRenamerS :: RenamerS
 initRenamerS = RenamerS { counter = 0, currEnv = Map.empty }
 

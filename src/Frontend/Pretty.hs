@@ -3,7 +3,7 @@ module Frontend.Pretty
     ) where
 
 import TechnePrelude hiding ((<>))
-import Frontend.AST
+import Frontend.Syntax
 import Frontend.Infer (IType(..), Scheme(..), TVar(..), TCon(..), Kind(..))
 
 import Data.Text.Prettyprint.Doc

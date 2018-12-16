@@ -31,7 +31,7 @@ module Frontend.Infer
     ) where
 
 import TechnePrelude
-import Frontend.AST
+import Frontend.Syntax
 import Frontend.Parser
 
 import Control.Monad.Except
@@ -43,12 +43,11 @@ import qualified Data.Set as Set
 --  Adaptation of: http://dev.stephendiehl.com/fun/006_hindley_milner.html
 
 -- TODO: document functions :(
--- TODO: typecheck user data types and patterns
--- TODO: refactor AST with IType and Kind
 
 -- ----------------------------------------------------------------------------
 -- Definitions
 -- ----------------------------------------------------------------------------
+
 data Scheme = Forall [TVar] IType    deriving (Show, Eq, Ord)
 data Kind   = Star | KArr Kind Kind  deriving (Show, Eq, Ord)
 data TVar   = TV Text Kind           deriving (Show, Eq, Ord)
@@ -80,6 +79,7 @@ type Subst = Map.Map TVar IType
 -- ----------------------------------------------------------------------------
 -- Type utilities
 -- ----------------------------------------------------------------------------
+
 -- A concrete type
 pattern T a = TCon (TC a Star)
 
@@ -143,11 +143,12 @@ applyDataType name [x1, x2, x3, x4] = pDataType4 name x1 x2 x3 x4
 -- ----------------------------------------------------------------------------
 -- typeOf
 -- ----------------------------------------------------------------------------
+
 class Typed a where
     typeOf :: a -> IType
 
 instance Typed Lit where
-    typeOf (StrLit  _) = pList (tChar)
+    typeOf (StrLit  _) = pList tChar
     typeOf (ChrLit  _) = tChar
     typeOf (IntLit  _) = tInt
     typeOf (FltLit  _) = tFloat
@@ -173,8 +174,8 @@ initTypeEnv = TypeEnv $ Map.fromList
     , ("int2float", S $ tInt   ->> tFloat)
 
     -- list functions
-    , ("++" , oneVarScheme $ pList (tVarA) ->> pList (tVarA)     ->> pList (tVarA))
-    , ("map", twoVarScheme $ pList (tVarA) ->> (tVarA ->> tVarB) ->> pList (tVarB))
+    , ("++" , oneVarScheme $ pList tVarA ->> pList tVarA     ->> pList tVarA)
+    , ("map", twoVarScheme $ pList tVarA ->> (tVarA ->> tVarB) ->> pList tVarB)
 
     -- generic functions
     , ("eq", oneVarScheme $ tVarA ->> tVarA ->> tBool)]
@@ -188,6 +189,7 @@ emptyTypeEnv = TypeEnv Map.empty
 -- ----------------------------------------------------------------------------
 -- kindOf
 -- ----------------------------------------------------------------------------
+
 class Kinded t where
     kindOf :: t -> Kind
 
@@ -206,6 +208,7 @@ instance Kinded IType where
 -- ----------------------------------------------------------------------------
 -- Substitutable
 -- ----------------------------------------------------------------------------
+
 class Substitutable a where
     apply :: Subst -> a -> a    -- apply the Subst over expressions
     ftv   :: a -> Set.Set TVar  -- query free variables and return them
@@ -235,6 +238,7 @@ instance Substitutable TypeEnv where
 -- ----------------------------------------------------------------------------
 -- Helpers
 -- ----------------------------------------------------------------------------
+
 initInferS :: InferS
 initInferS = InferS 0
 
@@ -279,7 +283,7 @@ filterNamed (Nothing, _) = False
 -- Maybe this should be resolved earlier, like in the renamer or in a seperate
 -- desugar phase
 fixTupleOrder :: [TupleElem a] -> [a]
-fixTupleOrder tuple = map extract tuple
+fixTupleOrder = map extract
     where extract (IndexedTElem x) = x
           extract (NamedTElem _ x) = x
 
@@ -295,6 +299,7 @@ applyTuple xs = flip applyDataType xs $
 -- ----------------------------------------------------------------------------
 -- Main functions
 -- ----------------------------------------------------------------------------
+
 unify ::  IType -> IType -> InferM Subst
 unify (l `TAp` r) (l' `TAp` r')  = do
     s1 <- unify l l'
@@ -416,7 +421,7 @@ infer env (MatchExpr test cases) = do
     foldM (inferCase testtyp) (emptySubst, tv) cases
     where inferCase testtyp (subst, r') (ptrn, r) = do
             (pair@(name, t1), subtyps) <- inferPattern env ptrn
-            (s2, t2) <- infer (env `extendTypeEnvAll` (filterNamedAndGeneralize (pair:subtyps))) r
+            (s2, t2) <- infer (env `extendTypeEnvAll` filterNamedAndGeneralize (pair:subtyps)) r
             s3 <- unify t1 testtyp
             s4 <- unify t2 r'
             return (s4 `composeSubst` s3 `composeSubst` s2, apply s4 t2)
@@ -487,6 +492,7 @@ inferPattern env (UnpackPattern name typname (Tuple tuple)) = do
 -- ----------------------------------------------------------------------------
 -- Runners
 -- ----------------------------------------------------------------------------
+
 runInfer :: InferM (Subst, IType) -> Either InferE Scheme
 runInfer m = case evalState (runExceptT m) initInferS of
   Left err  -> Left err

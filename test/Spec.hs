@@ -4,7 +4,7 @@ import Test.HUnit
 import Text.Megaparsec
 import Control.Monad.State.Lazy
 
-import Frontend.AST
+import Frontend.Syntax
 import Frontend.Parser
 import Frontend.Infer
 

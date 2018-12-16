@@ -24,7 +24,7 @@ module Frontend.Parser
     ) where
 
 import TechnePrelude
-import Frontend.AST
+import Frontend.Syntax
 
 import Data.Void (Void)
 import Text.Megaparsec
@@ -37,6 +37,7 @@ import qualified Data.Set as Set
 -- ----------------------------------------------------------------------------
 -- Types
 -- ----------------------------------------------------------------------------
+
 data ParserS =
     ParserS   { stateFnDefs  :: [FnDef]
               , stateFixity  :: [Fixity]
@@ -49,6 +50,7 @@ type ParserE    = ParseErrorBundle Text Void
 -- ----------------------------------------------------------------------------
 -- State related functions
 -- ----------------------------------------------------------------------------
+
 initParserS :: ParserS
 initParserS = ParserS { stateFnDefs = []
                       , stateFixity = []
@@ -80,6 +82,7 @@ getFnReturnType fnname = (lastSafe =<<) <$> getFnSignature fnname
 -- ----------------------------------------------------------------------------
 -- Helper functions for parsing in general
 -- ----------------------------------------------------------------------------
+
 testParser p = parseTest (runStateT p initParserS)
 tparse p = parse (runStateT p initParserS)
 
@@ -98,6 +101,7 @@ repl = (ReplFixity <$> fixity)
 -- ----------------------------------------------------------------------------
 -- Lexer
 -- ----------------------------------------------------------------------------
+
 spaceConsumer :: ParserM ()
 spaceConsumer = L.space space1 lineComment blockComment
     where lineComment = L.skipLineComment "#"
@@ -212,6 +216,7 @@ typeparamIdent = lowcaseIdent
 -- ----------------------------------------------------------------------------
 -- Fixity related functions
 -- ----------------------------------------------------------------------------
+
 fixity :: ParserM [Fixity]
 fixity = do
     constr <- (rword "infixl" >> return InfixL)
@@ -250,6 +255,7 @@ hasOp name = do
 -- ----------------------------------------------------------------------------
 -- Parsers (from here to end of the file)
 -- ----------------------------------------------------------------------------
+
 module_ :: ParserM Module
 module_ = do
     imports <- many import_
@@ -276,6 +282,7 @@ decl = FnDecl <$> fnTop
 -- ----------------------------------------------------------------------------
 -- Helpers
 -- ----------------------------------------------------------------------------
+
 typeWithConstraints :: [Constraint] -> ParserM Type
 typeWithConstraints cnsts =
     (flip PolyType [] <$> genericIdent) <|> do
@@ -346,6 +353,7 @@ freshName = do
 -- ----------------------------------------------------------------------------
 -- Primitives
 -- ----------------------------------------------------------------------------
+
 -- TODO: forced types?, like a(x : Int, 3)
 ref :: ParserM Ref
 ref = flip Ref UnknownType <$> identifier
@@ -448,6 +456,7 @@ fnApplTerm =  refExpr
 -- ----------------------------------------------------------------------------
 -- Local exprs
 -- ----------------------------------------------------------------------------
+
 refExpr :: ParserM Expr
 refExpr = RefExpr <$> ref
 
@@ -500,6 +509,7 @@ if_ = do
 -- ----------------------------------------------------------------------------
 -- Top lvl stuff
 -- ----------------------------------------------------------------------------
+
 -- TODO: if it's a product type with no name, gave type const.'s name
 -- FIXME: find a better syntax for existentialCnsts
 data_ :: ParserM Dat

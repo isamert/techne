@@ -1,7 +1,7 @@
 module Main where
 
 import TechnePrelude
-import Frontend.AST
+import Frontend.Syntax
 import Frontend.Desugar
 import Frontend.Parser
 import Frontend.Infer
@@ -23,6 +23,7 @@ import System.IO.Unsafe (unsafePerformIO)
 -- ----------------------------------------------------------------------------
 -- Data declerations
 -- ----------------------------------------------------------------------------
+
 -- Commandline options
 data Options = Options
   { interactive :: Bool
@@ -39,6 +40,7 @@ type ReplM = InputT (StateT ReplS IO)
 -- ----------------------------------------------------------------------------
 -- Main
 -- ----------------------------------------------------------------------------
+
 -- | Get commandline options and display information if necessary.
 main :: IO ()
 main = runOptions =<< execParser opts
@@ -51,6 +53,7 @@ main = runOptions =<< execParser opts
 -- ----------------------------------------------------------------------------
 -- Commandline options
 -- ----------------------------------------------------------------------------
+
 optInteractive :: Parser Bool
 optInteractive = switch $
     long "interactive"
@@ -88,6 +91,7 @@ runOptions (Options i outf inf) = putStrLn $ tgroom i <> tgroom outf <> tgroom i
 -- ----------------------------------------------------------------------------
 -- REPL
 -- ----------------------------------------------------------------------------
+
 runRepl :: IO ()
 runRepl = evalStateT (runInputT replSettings repl) initReplS
 
@@ -143,6 +147,7 @@ outputTextLn str = outputStrLn (tunpack str)
 -- ----------------------------------------------------------------------------
 -- REPL commands
 -- ----------------------------------------------------------------------------
+
 cmds :: [([Text], Text -> ReplM ())]
 cmds = [ (["quit", "q"       ] , \_ -> return ())
        , (["type", "t"       ] , cmdType False  )
@@ -199,6 +204,7 @@ cmdType dump line = do
 -- ----------------------------------------------------------------------------
 -- REPL cmd helpers
 -- ----------------------------------------------------------------------------
+
 printErrBundle :: ParserE -> ReplM ()
 printErrBundle err = outputStrLn (errorBundlePretty err)
 
