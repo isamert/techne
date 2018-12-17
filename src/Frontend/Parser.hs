@@ -39,10 +39,10 @@ import qualified Data.Set as Set
 -- ----------------------------------------------------------------------------
 
 data ParserS =
-    ParserS   { stateFnDefs  :: [FnDef]
-              , stateFixity  :: [Fixity]
-              , stateCounter :: Int
-              } deriving (Show, Eq)
+    ParserS { stateFnDefs         :: [FnDef]
+            , stateFixity         :: [Fixity]
+            , stateParamCounter   :: Int
+            } deriving (Show,  Eq)
 
 type ParserM a  = StateT ParserS (Parsec Void Text) a
 type ParserE    = ParseErrorBundle Text Void
@@ -54,7 +54,8 @@ type ParserE    = ParseErrorBundle Text Void
 initParserS :: ParserS
 initParserS = ParserS { stateFnDefs = []
                       , stateFixity = []
-                      , stateCounter = 0 }
+                      , stateParamCounter = 0
+                      }
 
 hasFn :: Name -> ParserM Bool
 hasFn fnname = do
@@ -70,14 +71,12 @@ updateFnDefs def = do
     put $ state { stateFnDefs = def : stateFnDefs state }
     return def
 
+-- TODO: delete?
 getFnSignature :: Name -> ParserM (Maybe FnSignature)
 getFnSignature fnname = do
     state <- get
     return $ fmap fnDefSignature . headSafe . filter
       (\(FnDef name sig) -> name == fnname) $ stateFnDefs state
-
-getFnReturnType :: Name -> ParserM (Maybe Type)
-getFnReturnType fnname = (lastSafe =<<) <$> getFnSignature fnname
 
 -- ----------------------------------------------------------------------------
 -- Helper functions for parsing in general
@@ -205,7 +204,7 @@ genericIdent :: ParserM Text
 genericIdent = lexeme . try $ char '~' >> identifier
 
 dataIdent :: ParserM Text
-dataIdent = identifier
+dataIdent = upcaseIdent
 
 conceptIdent :: ParserM Text
 conceptIdent = upcaseIdent
@@ -285,15 +284,18 @@ decl = FnDecl <$> fnTop
 
 typeWithConstraints :: [Constraint] -> ParserM Type
 typeWithConstraints cnsts =
-    (flip PolyType [] <$> genericIdent) <|> do
+    (Tv <$> genericIdent) <|> do
         tname <- identifier
         case lookupConstraints tname cnsts of
-          []                    -> return $ ConcreteType tname
-          [TypeConstraint name] -> return $ ConstraintType tname
-          xs -> PolyType tname <$> mapM
+          []                    -> return $ T tname
+          [TypeConstraint name] -> return $ Tv name -- ConstraintType tname
+          xs -> return $ Tv tname
+          {- TODO: after implementing typeclasses, assign constraints here
+             <$> mapM
                  (\case
                    ConceptConstraint _ cncpt -> return cncpt
                    TypeConstraint _ -> fail "A type constraint cannot appear here.") xs
+         -}
 
 -- | Parse `A a`, return (a, A)
 constraint :: ParserM Constraint
@@ -324,7 +326,9 @@ pattern_ = do
       <|> fmap (RegexPattern bindname) regexLit
       <|> fmap (TuplePattern bindname) (tuple pattern_)
       <|> fmap (ListPattern bindname) (list pattern_)
-      <|> try (liftM2 (UnpackPattern bindname) identifier (tuple pattern_))
+      <|> try (liftM2 (UnpackPattern bindname)
+                      dataIdent
+                      (try (tuple pattern_) <|> return (Tuple [])))
       <|> case bindname of
             Just _  -> fail "Cannot bind pattern to itself"
             Nothing -> BindPattern <$> identifier
@@ -334,7 +338,7 @@ param :: [Constraint] -> ParserM Param
 param cnsts = do
     pattrn <- pattern_
     typ <- optional (colon >> typeWithConstraints cnsts)
-    return $ Param pattrn (fromMaybe UnknownType typ)
+    return $ Param pattrn typ
 
 -- TODO: check for name conflicts
 params :: [Constraint] -> ParserM [Param]
@@ -344,20 +348,19 @@ params cnsts = param cnsts `sepBy` comma
 typeconstraint :: ParserM Constraint
 typeconstraint = TypeConstraint <$> typeparamIdent
 
-freshName :: ParserM Text
-freshName = do
+freshAnonParam :: ParserM Text
+freshAnonParam = do
     s <- get
-    put s { stateCounter = stateCounter s + 1 }
-    return $ "anonparam$" ++ tshow (stateCounter s)
+    put s { stateParamCounter = stateParamCounter s + 1 }
+    return $ "anonparam$" ++ tshow (stateParamCounter s)
 
 -- ----------------------------------------------------------------------------
 -- Primitives
 -- ----------------------------------------------------------------------------
 
--- TODO: forced types?, like a(x : Int, 3)
 ref :: ParserM Ref
-ref = flip Ref UnknownType <$> identifier
-      <|> PlaceHolder <$> (char '$' >> integer)
+ref = fmap Ref identifier
+      <|> fmap PlaceHolder (char '$' >> integer)
 
 tuple :: ParserM a -> ParserM (Tuple a)
 tuple p = Tuple <$> parens (tupElem `sepBy` comma)
@@ -382,7 +385,7 @@ lambda = do
     prms <- params []
     wArrow
     body <- expr
-    return $ Fn Nothing prms UnknownType body []
+    return $ Fn Nothing prms body []
 
 -- FIXME: While this[1] is valid, this[2] will produce some inconsistencies
 -- with typechecker. Look for infer env (FnApplExpr ... in Frontend.Infer
@@ -406,8 +409,11 @@ fnCall = do
             return $ fnappl { fnApplTuple = tuple <> fnApplTuple fnappl }
           concatFn expr (".", app) = return $ app `prependFnAppl` IndexedTElem expr
           concatFn expr (op, app) = do
-            name <- freshName
-            return $ FnApplExpr (mksRef op) (mkTuple [expr, mkLambda [mksParam name UnknownType] (app `prependFnAppl` IndexedTElem (mksRef name))])
+            name <- freshAnonParam
+            return $ FnApplExpr (mksRef op)
+                                (mkTuple [expr,
+                                          mkLambda [mksParam name Nothing]
+                                                   (app `prependFnAppl` IndexedTElem (mksRef name))])
           oper = do
               x <- infixIdent
               hasop <- hasOp x
@@ -448,10 +454,7 @@ fnCallTerm = when_
 -- FIXME: fnCall may also return a lambda
 fnApplTerm :: ParserM Expr
 fnApplTerm =  refExpr
-                <|> parens lambdaExpr
-                <|> parens if_
-                <|> parens when_
-                <|> parens match_
+                <|> parens expr
 
 -- ----------------------------------------------------------------------------
 -- Local exprs
@@ -515,7 +518,7 @@ if_ = do
 data_ :: ParserM Dat
 data_ = do
     rword "data"
-    name <- dataIdent
+    name <- identifier
     typecnsts <- typeconstraint `sepBy` comma
     equal
     existentialCnsts <- constraintsWithArrow
@@ -525,7 +528,7 @@ data_ = do
     return $ Dat name typecnsts (datadefs `prependBase` base)
     where sum     cnsts = product cnsts `sepBy1` bar
           product cnsts = liftM2 (,)
-              identifier
+              dataIdent
               (try (parens (dataParams cnsts)) <|> return [])
           dataParam cnsts = do
               name <- identifier
@@ -561,14 +564,12 @@ fnTop = do
     name <- identifier
     params <- getFnSignature name >>= \case
         Just sig -> pattern_`sepBy` comma >>= \pattrns ->
-            -- FIXME: What if function is in dotfree notation?:
             if length pattrns /= (length sig - 1)
               then fail "Parameter count differs from function definition"
-              else return $ zipWith Param pattrns sig
+              else return $ zipWith Param pattrns (map Just sig)
         Nothing -> params []
     equal
-    liftM3 (Fn (Just name) params)
-           (fromMaybe UnknownType <$> getFnReturnType name)
+    liftM2 (Fn (Just name) params)
            expr where_
     where where_ = (rword "where" >> decl `sepBy` comma) <|> return []
 

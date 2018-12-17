@@ -57,21 +57,27 @@ data Constraint
     | TypeConstraint Name                -- concept X of a
     deriving (Show, Eq, Data, Typeable)
 
+data Scheme = Forall [TVar] Type     deriving (Show, Eq, Ord, Data, Typeable)
+data Kind   = Star | KArr Kind Kind  deriving (Show, Eq, Ord, Data, Typeable)
+data TVar   = TV Text Kind           deriving (Show, Eq, Ord, Data, Typeable)
+data TCon   = TC Text Kind           deriving (Show, Eq, Ord, Data, Typeable)
+
 data Type
-    = ConcreteType Name           -- Int
-    | PolyType Name [ConceptName] -- `Show a => a` => PolyType a ["Show"]
-    | ConstraintType Name         -- concept X of a reqs f : a -> a => `a` is ContraintType
-    | UnknownType                 -- Used as placeholder while parsing.
+    = TVar TVar
+    | TCon TCon
+    | TAp  Type Type
     deriving (Show, Eq, Ord, Data, Typeable)
+
+infixr `TAp`
 
 data DataParam = DataParam Name Type
     deriving (Show, Eq, Data, Typeable)
 
-data Param = Param Pattern Type
+data Param = Param Pattern (Maybe Type)
     deriving (Show, Eq, Data, Typeable)
 
 data Ref
-    = Ref { refName :: Name, refType :: Type }  -- a
+    = Ref Name            -- a
     | PlaceHolder Integer -- "$1"
     deriving (Show, Eq, Ord, Data, Typeable)
 
@@ -170,7 +176,6 @@ data Op
 data Fn
     = Fn { fnName       :: Maybe Name
          , fnParams     :: [Param]
-         , fnReturnType :: Type
          , fnBody       :: Expr
          , fnScope      :: [Decl] -- where clause
          } deriving (Show, Eq, Data, Typeable)
@@ -202,17 +207,16 @@ prependFnAppl fnAppl expr = fnAppl { fnApplTuple = fnApplTuple fnAppl `prependTu
 -- mk/mks (s for simple) (These are generally for expressions)
 -- ----------------------------------------------------------------------------
 
-mksParam :: Text -> Type -> Param
+mksParam :: Text -> Maybe Type -> Param
 mksParam name = Param (BindPattern name)
 
 mksRef :: Text -> Expr
-mksRef name = RefExpr $ Ref name UnknownType
+mksRef name = RefExpr $ Ref name
 
 mkLambda :: [Param] -> Expr -> Expr
 mkLambda prms body = FnExpr $
     Fn { fnName = Nothing
        , fnParams = prms
-       , fnReturnType = UnknownType
        , fnBody = body
        , fnScope = [] }
 
@@ -227,14 +231,21 @@ mkEqCheck = BinExpr (BinOp "==")
 -- Predefined patterns for easy access
 -- ----------------------------------------------------------------------------
 
-pattern EUnary  name expr            = UnExpr    (UnOp    name) expr
-pattern EBinary name exprl exprr     = BinExpr   (BinOp   name) exprl exprr
-pattern EList   x                    = ListExpr  (List       x)
-pattern ETuple  x                    = TupleExpr (Tuple      x)
-pattern EChr    x                    = LitExpr   (ChrLit     x)
-pattern EStr    x                    = LitExpr   (StrLit     x)
-pattern EInt    x                    = LitExpr   (IntLit     x)
-pattern EFlt    x                    = LitExpr   (FltLit     x)
-pattern EFrac   x                    = LitExpr   (FracLit    x)
-pattern ERef name typ                = RefExpr   (Ref name typ)
-pattern EFn name prms rt body scope  = FnExpr (Fn name prms rt body scope)
+pattern EUnary  name expr         = UnExpr    (UnOp    name) expr
+pattern EBinary name exprl exprr  = BinExpr   (BinOp   name) exprl exprr
+pattern EList   x                 = ListExpr  (List       x)
+pattern ETuple  x                 = TupleExpr (Tuple      x)
+pattern EChr    x                 = LitExpr   (ChrLit     x)
+pattern EStr    x                 = LitExpr   (StrLit     x)
+pattern EInt    x                 = LitExpr   (IntLit     x)
+pattern EFlt    x                 = LitExpr   (FltLit     x)
+pattern EFrac   x                 = LitExpr   (FracLit    x)
+pattern ERef name                 = RefExpr   (Ref     name)
+pattern EFn name prms body scope  = FnExpr (Fn name prms body scope)
+
+-- A concrete type
+pattern T a = TCon (TC a Star)
+-- A type scheme for a concrete type
+pattern S a = Forall [] a
+-- A type variable with kind *
+pattern Tv a = (TVar (TV a Star))

@@ -175,7 +175,7 @@ cmdDefault line = do
     typeenv <- lift $ gets typeEnv
     case parseReplWithState pstate line of
       Right (x, pstate) -> case x of
-        ReplExpr expr -> printAndUpdateState expr pstate
+        ReplExpr expr -> printAndUpdateState (desugarExpr expr) pstate
         ReplDecl decl -> do
             outputStrLn $ groom decl
             case inferDecl typeenv decl of
@@ -196,8 +196,8 @@ cmdType dump line = do
     typeenv <- lift $ gets typeEnv
     case parseExprWithState pstate line of
       Right (expr, pstate) -> if dump
-                                 then (outputTextLn . tshow ) (inferExpr typeenv expr)
-                                 else (outputTextLn . tshow . fmap pretty) (inferExpr typeenv expr)
+                                 then (outputTextLn . tshow ) (inferExpr typeenv $ desugarExpr expr)
+                                 else (outputTextLn . tshow . fmap pretty) (inferExpr typeenv $ desugarExpr expr)
       Left y               -> printErrBundle y
     repl
 

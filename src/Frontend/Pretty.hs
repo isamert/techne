@@ -4,7 +4,6 @@ module Frontend.Pretty
 
 import TechnePrelude hiding ((<>))
 import Frontend.Syntax
-import Frontend.Infer (IType(..), Scheme(..), TVar(..), TCon(..), Kind(..))
 
 import Data.Text.Prettyprint.Doc
 import Data.Text.Prettyprint.Doc.Render.String
@@ -17,7 +16,7 @@ flattenKind Star         = [Star]
 flattenKind (KArr k1 k2) = flattenKind k1 ++ flattenKind k2
 
 -- :kind Map => Map :: * -> * -> *
-prettyKind :: IType -> Doc a
+prettyKind :: Type -> Doc a
 prettyKind = undefined
 
 instance Pretty Kind where
@@ -30,7 +29,7 @@ instance Pretty TCon where
     pretty (TC tv kind) = pretty tv <+> pretty kind
 
 pattern Arrow = (TCon (TC "->" (KArr Star (KArr Star Star))))
-instance Pretty IType where
+instance Pretty Type where
     pretty (TVar (TV tv kind)) = prettyTV tv
     pretty (TCon (TC tc kind)) = pretty tc
     pretty (TAp Arrow t)       = pretty t <+> "->"

@@ -7,16 +7,8 @@ module Frontend.Infer
     -- Data
     , TypeEnv(..)
     , Subst(..)
-    , IType(..)
-    , Scheme(..)
-    , TVar(..)
-    , TCon(..)
-    , Kind(..)
     -- Utils
     , generalize
-    , pattern T
-    , pattern Tv
-    , pattern S
     , (->>)
     , pList
     , applyTuple
@@ -48,25 +40,13 @@ import qualified Data.Set as Set
 -- Definitions
 -- ----------------------------------------------------------------------------
 
-data Scheme = Forall [TVar] IType    deriving (Show, Eq, Ord)
-data Kind   = Star | KArr Kind Kind  deriving (Show, Eq, Ord)
-data TVar   = TV Text Kind           deriving (Show, Eq, Ord)
-data TCon   = TC Text Kind           deriving (Show, Eq, Ord)
-
--- | An (i)nferred type
-data IType
-    = TVar TVar
-    | TCon TCon
-    | TAp  IType IType
-    deriving (Show, Eq, Ord)
-
 pattern NotATuple = OtherError "Tuples can not have one element."
 
 data InferE
     = UnboundVariable Text
-    | UnificationFail IType IType
-    | InfiniteType TVar IType
-    | KindMismatch TVar IType
+    | UnificationFail Type Type
+    | InfiniteType TVar Type
+    | KindMismatch TVar Type
     | NotAnExpression Decl
     | OtherError Text
     deriving (Show, Eq)
@@ -74,36 +54,26 @@ data InferE
 newtype TypeEnv = TypeEnv (Map.Map Name Scheme) deriving (Show, Eq, Ord)
 newtype InferS = InferS { counter :: Int }
 type InferM = ExceptT InferE (State InferS)
-type Subst = Map.Map TVar IType
+type Subst = Map.Map TVar Type
 
 -- ----------------------------------------------------------------------------
 -- Type utilities
 -- ----------------------------------------------------------------------------
 
--- A concrete type
-pattern T a = TCon (TC a Star)
-
--- A type scheme for a concrete type
-pattern S a = Forall [] a
-
--- A type variable with kind *
-pattern Tv a = (TVar (TV a Star))
-
 infixr -*>
 infixr ->>
 infixr `isKindOf`
-infixr `TAp`
 
 -- | Kind of a type like: Star -*> Star -*> Star
 (-*>) :: Kind -> Kind -> Kind
 a -*> b = KArr a b
 
 -- | Function type like: tInt ->> tInt, synonymous for "->"
-(->>) :: IType -> IType -> IType
+(->>) :: Type -> Type -> Type
 a ->> b = TAp (TAp tArrow a) b
 
 -- | Used while building type definitions with kinds, like: "[]" `isKindOf` Star -*> Star
-isKindOf :: Text -> Kind -> IType
+isKindOf :: Text -> Kind -> Type
 a `isKindOf` b = TCon (TC a b)
 
 -- Type definitions
@@ -133,7 +103,7 @@ pDataType2 name a b     = TAp (TAp (tTuple2 name) a) b
 pDataType3 name a b c   = TAp (TAp (tTuple3 name) a) (TAp b c)
 pDataType4 name a b c d = TAp (TAp (tTuple4 name) a) (TAp b (TAp c d))
 
-applyDataType :: Text -> [IType] -> IType
+applyDataType :: Text -> [Type] -> Type
 applyDataType name []               = name `isKindOf` Star
 applyDataType name [x1]             = pDataType1 name x1
 applyDataType name [x1, x2]         = pDataType2 name x1 x2
@@ -145,7 +115,7 @@ applyDataType name [x1, x2, x3, x4] = pDataType4 name x1 x2 x3 x4
 -- ----------------------------------------------------------------------------
 
 class Typed a where
-    typeOf :: a -> IType
+    typeOf :: a -> Type
 
 instance Typed Lit where
     typeOf (StrLit  _) = pList tChar
@@ -178,7 +148,7 @@ initTypeEnv = TypeEnv $ Map.fromList
     , ("map", twoVarScheme $ pList tVarA ->> (tVarA ->> tVarB) ->> pList tVarB)
 
     -- generic functions
-    , ("eq", oneVarScheme $ tVarA ->> tVarA ->> tBool)]
+    , ("==", oneVarScheme $ tVarA ->> tVarA ->> tBool)]
 
     where oneVarScheme = Forall [TV "a" Star]
           twoVarScheme = Forall [TV "a" Star, TV "b" Star]
@@ -199,7 +169,7 @@ instance Kinded TVar where
 instance Kinded TCon where
     kindOf (TC v k) = k
 
-instance Kinded IType where
+instance Kinded Type where
     kindOf (TCon tc) = kindOf tc
     kindOf (TVar u)  = kindOf u
     kindOf (TAp t _) = case kindOf t of
@@ -213,7 +183,7 @@ class Substitutable a where
     apply :: Subst -> a -> a    -- apply the Subst over expressions
     ftv   :: a -> Set.Set TVar  -- query free variables and return them
 
-instance Substitutable IType where
+instance Substitutable Type where
     apply _ (TCon a)       = TCon a
     apply s t@(TVar a)     = Map.findWithDefault t a s
     apply s (t1 `TAp` t2)  = apply s t1 `TAp` apply s t2
@@ -248,11 +218,11 @@ extendTypeEnv (TypeEnv env) (x, s) = TypeEnv $ Map.insert x s env
 extendTypeEnvAll :: TypeEnv -> [(Name, Scheme)] -> TypeEnv
 extendTypeEnvAll (TypeEnv env) tsps = TypeEnv $ Map.fromList tsps `Map.union` env
 
-fresh :: Kind -> InferM IType
+fresh :: Kind -> InferM Type
 fresh k = do
   s <- get
   put s{counter = counter s + 1}
-  return $ TVar $ TV ("t" ++ tshow (counter s)) k
+  return $ TVar $ TV ("tv" ++ tshow (counter s)) k
 
 occursCheck :: Substitutable a => TVar -> a -> Bool
 occursCheck a t = a `Set.member` ftv t
@@ -267,7 +237,7 @@ composeSubst s1 s2 = Map.map (apply s1) s2 `Map.union` s1
 letters :: [String]
 letters = [1..] >>= flip replicateM ['a'..'z']
 
-filterNamedAndGeneralize  :: [(Maybe Name, IType)] -> [(Name, Scheme)]
+filterNamedAndGeneralize  :: [(Maybe Name, Type)] -> [(Name, Scheme)]
 filterNamedAndGeneralize xs =
     map (\(a,b) -> (fromJust a, Forall [] b))
       $ filter filterNamed xs
@@ -300,7 +270,7 @@ applyTuple xs = flip applyDataType xs $
 -- Main functions
 -- ----------------------------------------------------------------------------
 
-unify ::  IType -> IType -> InferM Subst
+unify ::  Type -> Type -> InferM Subst
 unify (l `TAp` r) (l' `TAp` r')  = do
     s1 <- unify l l'
     s2 <- unify (apply s1 r) (apply s1 r')
@@ -311,26 +281,26 @@ unify t (TVar a) = bind a t
 unify (TCon a) (TCon b) | a == b = return emptySubst
 unify t1 t2 = throwError $ UnificationFail t1 t2
 
-bind ::  TVar -> IType -> InferM Subst
+bind ::  TVar -> Type -> InferM Subst
 bind a t | t == TVar a          = return emptySubst
          | occursCheck a t      = throwError $ InfiniteType a t
          | kindOf a /= kindOf t = throwError $ KindMismatch a t
          | otherwise            = return $ Map.singleton a t
 
-instantiate ::  Scheme -> InferM IType
+instantiate ::  Scheme -> InferM Type
 instantiate (Forall as t) = do
   as' <- mapM (\(TV _ k) -> fresh k) as
   let s = Map.fromList $ zip as as'
   return $ apply s t
 
-generalize :: TypeEnv -> IType -> Scheme
+generalize :: TypeEnv -> Type -> Scheme
 generalize env t  = Forall as t
     where as = Set.toList $ ftv t `Set.difference` ftv env
 
-close :: IType -> Scheme
+close :: Type -> Scheme
 close ty = normalize $ generalize emptyTypeEnv ty
 
-closeOver :: (Subst, IType) -> Scheme
+closeOver :: (Subst, Type) -> Scheme
 closeOver (sub, ty) = normalize sc
     where sc = generalize emptyTypeEnv (apply sub ty)
 
@@ -350,14 +320,14 @@ normalize (Forall ts body) = Forall (fmap snd ord) (normtype body)
             Just x -> TVar x
             Nothing -> error "type variable not in signature"
 
-lookupEnv :: TypeEnv -> Name -> InferM (Subst, IType)
+lookupEnv :: TypeEnv -> Name -> InferM (Subst, Type)
 lookupEnv (TypeEnv env) x =
   case Map.lookup x env of
     Nothing -> throwError $ UnboundVariable (tshow x)
     Just s  -> do t <- instantiate s
                   return (emptySubst, t)
 
-inferPrim :: TypeEnv -> [Expr] -> IType -> InferM (Subst, IType)
+inferPrim :: TypeEnv -> [Expr] -> Type -> InferM (Subst, Type)
 inferPrim env l t = do
     tv <- fresh Star
     (s1, tf) <- foldM inferStep (emptySubst, id) l
@@ -367,8 +337,8 @@ inferPrim env l t = do
             (s', t) <- infer (apply s env) exp
             return (s' `composeSubst` s, tf . (t ->>))
 
-infer :: TypeEnv -> Expr -> InferM (Subst, IType)
-infer env (ERef name _) =  lookupEnv env name
+infer :: TypeEnv -> Expr -> InferM (Subst, Type)
+infer env (ERef name) =  lookupEnv env name
 
 infer env (LitExpr lit) = return (emptySubst, typeOf lit)
 
@@ -427,17 +397,17 @@ infer env (MatchExpr test cases) = do
             return (s4 `composeSubst` s3 `composeSubst` s2, apply s4 t2)
 
 -- FIXME: (fn [[1], [a]] -> a) => can't infer a
-infer env (EFn name prms rt body scope) = do
-    p <- mapM (\(Param ptrn typ) -> inferPattern env ptrn) prms
-    let paramtyps = concatMap (uncurry (:)) p
-        env'      = env `extendTypeEnvAll` filterNamedAndGeneralize paramtyps
+infer env (EFn name prms body scope) = do
+    inferedptrns <- mapM (\(Param ptrn typ) -> inferPattern env ptrn) prms
+    let allinferedtyps = concatMap (uncurry (:)) inferedptrns
+        env' = env `extendTypeEnvAll` filterNamedAndGeneralize allinferedtyps
     (s1, t1) <- infer env' body
-    let p2 = map fst p
-        paramts = apply s1 (map snd p2)
-    let rtype = foldr (->>) t1 paramts
-    return (s1,  rtype)
+    let nametyppair = map fst inferedptrns
+        paramtyps   = apply s1 (map snd nametyppair)
+    let returntype  = foldr (->>) t1 paramtyps
+    return (s1,  returntype)
 
-inferPattern :: TypeEnv -> Pattern -> InferM ((Maybe Name, IType), [(Maybe Name, IType)])
+inferPattern :: TypeEnv -> Pattern -> InferM ((Maybe Name, Type), [(Maybe Name, Type)])
 inferPattern _ (BindPattern name) =
   fresh Star >>= \tvar -> return ((Just name, tvar), [])
 
@@ -493,7 +463,7 @@ inferPattern env (UnpackPattern name typname (Tuple tuple)) = do
 -- Runners
 -- ----------------------------------------------------------------------------
 
-runInfer :: InferM (Subst, IType) -> Either InferE Scheme
+runInfer :: InferM (Subst, Type) -> Either InferE Scheme
 runInfer m = case evalState (runExceptT m) initInferS of
   Left err  -> Left err
   Right res -> Right $ closeOver res
@@ -505,7 +475,7 @@ inferModule :: TypeEnv -> Module -> Either InferE TypeEnv
 inferModule = undefined
 
 inferDecl :: TypeEnv -> Decl -> Either InferE TypeEnv
-inferDecl env (FnDecl fn@(Fn (Just name) _ _ _ _)) =
+inferDecl env (FnDecl fn@(Fn (Just name) _ _ _)) =
     (\scheme -> extendTypeEnv env (name,scheme)) <$> inferExpr env (FnExpr fn)
 
 inferDecl env (DataDecl dat@(Dat name vars datapairs)) =
@@ -518,8 +488,7 @@ inferDecl _ decl = Left $ NotAnExpression decl
 -- I probably need to look inside the data definition and infer from there.
 inferDataCons typname typvars (name, params) =
     (name, close $ foldr (\param typ -> param2type param ->> typ) (returnType typvars)  params)
-        where param2type (DataParam paramname (ConcreteType typname)) = T typname
-              param2type (DataParam paramname (ConstraintType typname)) = Tv typname
+        where param2type (DataParam paramname typ) = typ
               nameOfConstraint (TypeConstraint name) = name
 
               returnType xs = applyDataType typname (map (Tv . nameOfConstraint) xs)

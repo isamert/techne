@@ -50,19 +50,19 @@ renameModule (Module imports decls) env = do
 
 -- TODO: rename PlaceHolders too
 renameExpr :: Expr -> GenEnv -> RenamerM Expr
-renameExpr (ERef name typ) env = do
+renameExpr (ERef name) env = do
     name <- renameFreeVar name env
-    return $ ERef name typ
+    return $ ERef name
 
 renameExpr (ListExpr list) env = ListExpr <$> renameList (`renameExpr` env) list
 renameExpr (TupleExpr tuple) env = TupleExpr <$> renameTuple (`renameExpr` env) tuple
 
 -- TODO: scope
-renameExpr fn@(EFn name prms_ rt expr_ scope) env = do
+renameExpr fn@(EFn name prms_ expr_ scope) env = do
     prms <- resetCurrEnv >> renameParams
     currenv <- gets currEnv
     expr <- renameExpr expr_ (Map.union currenv env) -- union is left-biased
-    return $ EFn name prms rt expr scope
+    return $ EFn name prms expr scope
     where renameParams = forM prms_ $ \case
             (Param ptrn typ) -> flip Param typ <$> renamePattern ptrn
 
