@@ -20,11 +20,11 @@ module Frontend.Infer
     , tBool
     , tChar
     , tFrac
+    , applyDataType
     ) where
 
 import TechnePrelude
 import Frontend.Syntax
-import Frontend.Parser
 
 import Control.Monad.Except
 import Control.Monad.State
@@ -62,7 +62,6 @@ type Subst = Map.Map TVar Type
 
 infixr -*>
 infixr ->>
-infixr `isKindOf`
 
 -- | Kind of a type like: Star -*> Star -*> Star
 (-*>) :: Kind -> Kind -> Kind
@@ -71,10 +70,6 @@ a -*> b = KArr a b
 -- | Function type like: tInt ->> tInt, synonymous for "->"
 (->>) :: Type -> Type -> Type
 a ->> b = TAp (TAp tArrow a) b
-
--- | Used while building type definitions with kinds, like: "[]" `isKindOf` Star -*> Star
-isKindOf :: Text -> Kind -> Type
-a `isKindOf` b = TCon (TC a b)
 
 -- Type definitions
 tVarA = TVar (TV "a" Star)
@@ -86,29 +81,29 @@ tInt   = T "int"
 tFloat = T "float"
 tChar  = T "char"
 tFrac  = T "frac"
-tArrow = "->"  `isKindOf` Star -*> Star -*> Star
-tList  = "[]"  `isKindOf` Star -*> Star
+tArrow = TyCon "->" $ Star -*> Star -*> Star
+tList  = TyCon "[]" $ Star -*> Star
 
-tTuple1 name = name `isKindOf` Star -*> Star
-tTuple2 name = name `isKindOf` Star -*> Star -*> Star
-tTuple3 name = name `isKindOf` Star -*> Star -*> Star -*> Star
-tTuple4 name = name `isKindOf` Star -*> Star -*> Star -*> Star -*> Star
-tTuple5 name = name `isKindOf` Star -*> Star -*> Star -*> Star -*> Star -*> Star
-tTuple6 name = name `isKindOf` Star -*> Star -*> Star -*> Star -*> Star -*> Star -*> Star
+tDataType1 c name = c name $ Star -*> Star
+tDataType2 c name = c name $ Star -*> Star -*> Star
+tDataType3 c name = c name $ Star -*> Star -*> Star -*> Star
+tDataType4 c name = c name $ Star -*> Star -*> Star -*> Star -*> Star
+tDataType5 c name = c name $ Star -*> Star -*> Star -*> Star -*> Star -*> Star
+tDataType6 c name = c name $ Star -*> Star -*> Star -*> Star -*> Star -*> Star -*> Star
 
 -- Polymorphic types that you can apply a type, like [*]
-pList                   = TAp tList
-pDataType1 name a       = TAp (tTuple1 name) a
-pDataType2 name a b     = TAp (TAp (tTuple2 name) a) b
-pDataType3 name a b c   = TAp (TAp (tTuple3 name) a) (TAp b c)
-pDataType4 name a b c d = TAp (TAp (tTuple4 name) a) (TAp b (TAp c d))
+pList                       = TAp tList
+pDataType1 cns name a       = TAp (tDataType1 cns name) a
+pDataType2 cns name a b     = TAp (TAp (tDataType2 cns name) a) b
+pDataType3 cns name a b c   = TAp (TAp (tDataType3 cns name) a) (TAp b c)
+pDataType4 cns name a b c d = TAp (TAp (tDataType4 cns name) a) (TAp b (TAp c d))
 
-applyDataType :: Text -> [Type] -> Type
-applyDataType name []               = name `isKindOf` Star
-applyDataType name [x1]             = pDataType1 name x1
-applyDataType name [x1, x2]         = pDataType2 name x1 x2
-applyDataType name [x1, x2, x3]     = pDataType3 name x1 x2 x3
-applyDataType name [x1, x2, x3, x4] = pDataType4 name x1 x2 x3 x4
+applyDataType :: (Name -> Kind -> Type) -> Text -> [Type] -> Type
+applyDataType c name []               = c name Star
+applyDataType c name [x1]             = pDataType1 c name x1
+applyDataType c name [x1, x2]         = pDataType2 c name x1 x2
+applyDataType c name [x1, x2, x3]     = pDataType3 c name x1 x2 x3
+applyDataType c name [x1, x2, x3, x4] = pDataType4 c name x1 x2 x3 x4
 
 -- ----------------------------------------------------------------------------
 -- typeOf
@@ -257,7 +252,7 @@ fixTupleOrder = map extract
     where extract (IndexedTElem x) = x
           extract (NamedTElem _ x) = x
 
-applyTuple xs = flip applyDataType xs $
+applyTuple xs = flip (applyDataType TyCon) xs $
     case length xs of
       1 -> error "Tuples cannot have only one element"
       2 -> "(,)"
@@ -463,8 +458,10 @@ inferPattern env (UnpackPattern name typname (Tuple tuple)) = do
 -- Runners
 -- ----------------------------------------------------------------------------
 
+runInferM m = evalState (runExceptT m) initInferS
+
 runInfer :: InferM (Subst, Type) -> Either InferE Scheme
-runInfer m = case evalState (runExceptT m) initInferS of
+runInfer m = case runInferM m of
   Left err  -> Left err
   Right res -> Right $ closeOver res
 
@@ -479,16 +476,25 @@ inferDecl env (FnDecl fn@(Fn (Just name) _ _ _)) =
     (\scheme -> extendTypeEnv env (name,scheme)) <$> inferExpr env (FnExpr fn)
 
 inferDecl env (DataDecl dat@(Dat name vars datapairs)) =
-    Right $ extendTypeEnvAll env constructorTypes
-    where constructorTypes = map (inferDataCons name vars) datapairs
+  case runInferM constructorTypes of
+    Left err  -> Left err
+    Right res -> Right $ env `extendTypeEnvAll` res
+    where constructorTypes = concat <$> mapM (inferDataCons env name vars) datapairs
 
 inferDecl _ decl = Left $ NotAnExpression decl
 
 -- FIXME: this only produces rank-1 kind. To produce rank-n kinds
 -- I probably need to look inside the data definition and infer from there.
-inferDataCons typname typvars (name, params) =
-    (name, close $ foldr (\param typ -> param2type param ->> typ) (returnType typvars)  params)
-        where param2type (DataParam paramname typ) = typ
+inferDataCons :: TypeEnv -> Name -> [Constraint] -> (Name, [DataParam]) -> InferM [(Name, Scheme)]
+inferDataCons env typname typvars (consname, consparams) = do
+    ctyp <- constyp
+    return $ (typname, close returnType):(consname, close ctyp):(map mkFieldAccessorFn consparams)
+        where param2type (DataParam _ typ) = return typ
               nameOfConstraint (TypeConstraint name) = name
+              constyp = foldrM (\param typ -> do
+                                                prmtyp <- param2type param
+                                                return $ prmtyp ->> typ) returnType consparams
 
-              returnType xs = applyDataType typname (map (Tv . nameOfConstraint) xs)
+              returnType = applyDataType TyCon typname (map (Tv . nameOfConstraint) typvars)
+              mkFieldAccessorFn (DataParam fieldname fieldtyp) =
+                (typname ++ FieldAccessor ++ fieldname, close $ returnType ->> fieldtyp)

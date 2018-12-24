@@ -25,6 +25,7 @@ module Frontend.Parser
 
 import TechnePrelude
 import Frontend.Syntax
+import Frontend.Infer
 
 import Data.Void (Void)
 import Text.Megaparsec
@@ -87,8 +88,8 @@ tparse p = parse (runStateT p initParserS)
 
 parseModule = runStateT module_ initParserS
 parseFile p file = runParser p file <$> readFile file
-parseReplWithState state = parse (runStateT repl state) "repl-line"
-parseExprWithState state = parse (runStateT expr state) "repl-line"
+parseReplWithState state = parse (runStateT repl state) "<stdin>"
+parseExprWithState state = parse (runStateT expr state) "<stdin>"
 
 repl :: ParserM Repl
 repl = (ReplFixity <$> fixity)
@@ -283,19 +284,16 @@ decl = FnDecl <$> fnTop
 -- ----------------------------------------------------------------------------
 
 typeWithConstraints :: [Constraint] -> ParserM Type
-typeWithConstraints cnsts =
-    (Tv <$> genericIdent) <|> do
-        tname <- identifier
-        case lookupConstraints tname cnsts of
-          []                    -> return $ T tname
-          [TypeConstraint name] -> return $ Tv name -- ConstraintType tname
-          xs -> return $ Tv tname
-          {- TODO: after implementing typeclasses, assign constraints here
-             <$> mapM
-                 (\case
-                   ConceptConstraint _ cncpt -> return cncpt
-                   TypeConstraint _ -> fail "A type constraint cannot appear here.") xs
-         -}
+typeWithConstraints cnsts = liftM2 (appliedType TyVar) genericIdent typeParams
+                              <|> liftM2 (mkType cnsts) identifier typeParams
+    where typeParams = optional . angles $ typeWithConstraints cnsts `sepBy` comma
+          mkType cnsts tname typprms  =
+              case lookupConstraints tname cnsts of
+                []                    -> appliedType TyCon tname typprms
+                [TypeConstraint name] -> appliedType TyVar name typprms
+                xs                    -> appliedType TyVar tname typprms
+                -- TODO: after implementing typeclasses, assign constraints here
+          appliedType cns typname typprms = applyDataType cns typname $ fromMaybe [] typprms
 
 -- | Parse `A a`, return (a, A)
 constraint :: ParserM Constraint
@@ -403,7 +401,7 @@ fnAppl = liftM2 FnApplExpr
 fnCall :: ParserM Expr
 fnCall = do
     first <- fnCallTerm
-    pairs <- many $ try (liftM2 (,) (dot <|> oper) fnAppl)
+    pairs <- many $ try (liftM2 (,) (dot <|> oper) (try fnAppl <|> refExpr))
     foldlM concatFn first pairs
     where concatFn (TupleExpr tuple) (".", fnappl) =
             return $ fnappl { fnApplTuple = tuple <> fnApplTuple fnappl }
@@ -417,8 +415,8 @@ fnCall = do
           oper = do
               x <- infixIdent
               hasop <- hasOp x
-              if hasop
-                 then fail "a call operator but found an infix operator"
+              if hasop || x == FieldAccessor
+                 then fail "a call operator but found an infix operator or a field accessor"
                  else return x
 
 expr :: ParserM Expr
@@ -451,10 +449,15 @@ fnCallTerm = when_
               <|> tupleExpr
               <|> refExpr
 
--- FIXME: fnCall may also return a lambda
 fnApplTerm :: ParserM Expr
-fnApplTerm =  refExpr
+fnApplTerm =  try fieldAccessor
+                <|> refExpr
                 <|> parens expr
+    where fieldAccessor = do
+            x1 <- some alphaNumChar
+            x2 <- string FieldAccessor
+            x3 <- some alphaNumChar
+            return . RefExpr . Ref $ tpack x1 ++ x2 ++ tpack x3
 
 -- ----------------------------------------------------------------------------
 -- Local exprs

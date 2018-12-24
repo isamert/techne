@@ -28,8 +28,7 @@ data Repl
 -- ----------------------------------------------------------------------------
 
 data Expr
-    = WhenExpr   { whenCases :: [(Expr, Expr)]
-                 }
+    = WhenExpr   { whenCases :: [(Expr, Expr)] }
     | MatchExpr  { matchTest  :: Expr
                  , matchCases :: [(Pattern, Expr)]
                  }
@@ -42,10 +41,13 @@ data Expr
     | FnExpr     Fn
     | RefExpr    Ref
     | UnExpr      { unExprOp      :: Op
-                  , unExprOperand :: Expr }
+                  , unExprOperand :: Expr
+                  }
     | BinExpr     { binExprOp     :: Op
                   , binExprLeft   :: Expr
-                  , binExprRight  :: Expr }
+                  , binExprRight  :: Expr
+                  }
+    | FixExpr     { fixExprExpr   :: Expr }
     deriving (Show, Eq, Data, Typeable)
 
 -- ----------------------------------------------------------------------------
@@ -55,7 +57,7 @@ data Expr
 data Constraint
     = ConceptConstraint Name ConceptName -- A a => a
     | TypeConstraint Name                -- concept X of a
-    deriving (Show, Eq, Data, Typeable)
+    deriving (Show, Eq, Ord, Data, Typeable)
 
 data Scheme = Forall [TVar] Type     deriving (Show, Eq, Ord, Data, Typeable)
 data Kind   = Star | KArr Kind Kind  deriving (Show, Eq, Ord, Data, Typeable)
@@ -70,7 +72,10 @@ data Type
 
 infixr `TAp`
 
-data DataParam = DataParam Name Type
+data DataParam
+    = DataParam { dataPrmName :: Name
+                , dataPrmType :: Type -- FIXME: replace Type with Text
+                }
     deriving (Show, Eq, Data, Typeable)
 
 data Param = Param Pattern (Maybe Type)
@@ -86,16 +91,21 @@ data Pattern
     | ElsePattern   { ptrnName     :: Maybe Name }    -- else ->
     | RestPattern   { ptrnName     :: Maybe Name }    -- ...
     | LitPattern    { ptrnName     :: Maybe Name
-                    , ptrnLit      :: Lit }           -- 3, "asd" etc.
+                    , ptrnLit      :: Lit
+                    }
     | RegexPattern  { ptrnName     :: Maybe Name
-                    , ptrnRegex    :: Text }          -- `$[a-d]^`
+                    , ptrnRegex    :: Text
+                    }
     | TuplePattern  { ptrnName     :: Maybe Name
-                    , ptrnTuple    :: Tuple Pattern }
+                    , ptrnTuple    :: Tuple Pattern
+                    }
     | ListPattern   { ptrnName     :: Maybe Name
-                    , ptrnList     :: List Pattern }
+                    , ptrnList     :: List Pattern
+                    }
     | UnpackPattern { ptrnName     :: Maybe Name
                     , ptrnDataName :: Name
-                    , ptrnPack     :: Tuple Pattern } -- A(3, b) where A is a data
+                    , ptrnPack     :: Tuple Pattern
+                    }
     deriving (Show, Eq, Data, Typeable)
 
 -- ----------------------------------------------------------------------------
@@ -231,6 +241,8 @@ mkEqCheck = BinExpr (BinOp "==")
 -- Predefined patterns for easy access
 -- ----------------------------------------------------------------------------
 
+pattern FieldAccessor = "-:"
+
 pattern EUnary  name expr         = UnExpr    (UnOp    name) expr
 pattern EBinary name exprl exprr  = BinExpr   (BinOp   name) exprl exprr
 pattern EList   x                 = ListExpr  (List       x)
@@ -242,6 +254,10 @@ pattern EFlt    x                 = LitExpr   (FltLit     x)
 pattern EFrac   x                 = LitExpr   (FracLit    x)
 pattern ERef name                 = RefExpr   (Ref     name)
 pattern EFn name prms body scope  = FnExpr (Fn name prms body scope)
+
+-- A concrete type
+pattern TyCon a s = TCon (TC a s)
+pattern TyVar a s = TVar (TV a s)
 
 -- A concrete type
 pattern T a = TCon (TC a Star)
