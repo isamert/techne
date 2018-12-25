@@ -166,29 +166,26 @@ cmdLoadFile line = do
     let files = swords $ tunpack line
     modules <- mapM (parseFile parseModule) files
     forM_ modules (\case
-                      Right (x, pstate) -> printAndUpdateState x pstate
-                      Left y            -> printErrBundle y)
+          Right (x, pstate) -> let mod = desugarModule x in
+                                   printAndUpdateState mod pstate >>
+                                   inferRepl inferModule mod
+          Left y            -> printErrBundle y)
     repl
 
 cmdDefault line = do
     pstate <- lift $ gets parserState
-    typeenv <- lift $ gets typeEnv
     case parseReplWithState pstate line of
       Right (x, pstate) -> case x of
         ReplExpr expr -> printAndUpdateState (desugarExpr expr) pstate
         ReplDecl decl -> do
-            outputStrLn $ groom decl
-            case inferDecl typeenv decl of
-              Right typeenv -> updateTypeEnv typeenv
-              Left err      -> outputStrLn (groom err)
-            return ()
+            outputStrLn $ groom (desugarDecl decl)
+            inferRepl inferDecl decl
         x -> printAndUpdateState x pstate
       Left y -> printErrBundle y
     repl
 
 cmdDumpAst = cmdDefault
 cmdDumpAstFile = cmdLoadFile
-
 
 cmdType :: Bool -> Text -> ReplM ()
 cmdType dump line = do
@@ -216,3 +213,10 @@ updateParserState pstate = lift (modify (\s -> s { parserState = pstate }))
 
 updateTypeEnv :: TypeEnv -> ReplM ()
 updateTypeEnv typeenv = lift (modify (\s -> s { typeEnv = typeenv }))
+
+inferRepl :: (TypeEnv -> a -> Either InferE TypeEnv) -> a -> ReplM ()
+inferRepl infer stuff = do
+    typeenv <- lift $ gets typeEnv
+    case infer typeenv stuff of
+      Right typeenv -> updateTypeEnv typeenv
+      Left err      -> outputStrLn (groom err)
