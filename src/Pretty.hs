@@ -1,9 +1,9 @@
-module Frontend.Pretty
+module Pretty
     ( pretty
     ) where
 
 import TechnePrelude hiding ((<>))
-import Frontend.Syntax
+import Syntax
 
 import Data.Text.Prettyprint.Doc
 import Data.Text.Prettyprint.Doc.Render.String

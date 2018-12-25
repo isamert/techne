@@ -1,4 +1,4 @@
-module Frontend.Infer
+module Infer
     ( -- Functions
       inferExpr
     , inferDecl
@@ -24,7 +24,7 @@ module Frontend.Infer
     ) where
 
 import TechnePrelude
-import Frontend.Syntax
+import Syntax
 
 import Control.Monad.Except
 import Control.Monad.State

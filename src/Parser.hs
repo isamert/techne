@@ -1,4 +1,4 @@
-module Frontend.Parser
+module Parser
     ( -- Re-exports
     runStateT
     , get
@@ -24,8 +24,8 @@ module Frontend.Parser
     ) where
 
 import TechnePrelude
-import Frontend.Syntax
-import Frontend.Infer
+import Syntax
+import Infer
 
 import Data.Void (Void)
 import Text.Megaparsec
@@ -386,7 +386,7 @@ lambda = do
     return $ Fn Nothing prms body []
 
 -- FIXME: While this[1] is valid, this[2] will produce some inconsistencies
--- with typechecker. Look for infer env (FnApplExpr ... in Frontend.Infer
+-- with typechecker. Look for infer env (FnApplExpr ... in Infer
 -- especially fixOrder function.
 -- [1]: (fn a, b, c -> a + b + c)(1)(2)(3)
 -- [2]: (fn a, b, c -> a + b + c)(c=3)(1,2) OR other variations with named args

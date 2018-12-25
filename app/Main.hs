@@ -1,11 +1,11 @@
 module Main where
 
 import TechnePrelude
-import Frontend.Syntax
-import Frontend.Desugar
-import Frontend.Parser
-import Frontend.Infer
-import Frontend.Pretty
+import Syntax
+import Desugar
+import Parser
+import Infer
+import Pretty
 
 import Text.Megaparsec
 import Text.Megaparsec.Char

@@ -1,8 +1,8 @@
-module Frontend.Renamer where
+module Renamer where
 
 import TechnePrelude
-import Frontend.Syntax
-import Frontend.Parser
+import Syntax
+import Parser
 
 import Data.Generics.Uniplate.Data
 import Data.Data (Data)

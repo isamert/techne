@@ -1,7 +1,7 @@
 {-# LANGUAGE DeriveFunctor              #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DeriveDataTypeable         #-}
-module Frontend.Syntax where
+module Syntax where
 
 import TechnePrelude
 
