@@ -2,11 +2,13 @@ module Infer
     ( -- Functions
       inferExpr
     , inferDecl
+    , inferModule
     , initTypeEnv
     , emptyTypeEnv
     -- Data
     , TypeEnv(..)
     , Subst(..)
+    , InferE(..)
     -- Utils
     , generalize
     , (->>)
@@ -136,6 +138,9 @@ initTypeEnv = TypeEnv $ Map.fromList
     , ("float2int", S $ tFloat ->> tInt  )
     , ("int2float", S $ tInt   ->> tFloat)
 
+     -- list functions
+    , ("++" , oneVarScheme $ pList tVarA ->> pList tVarA ->> pList tVarA)
+
     -- generic functions
     , ("==", oneVarScheme $ tVarA ->> tVarA ->> tBool)]
 
@@ -200,6 +205,9 @@ instance Substitutable TypeEnv where
 
 initInferS :: InferS
 initInferS = InferS 0
+
+unionTypeEnv :: TypeEnv -> TypeEnv -> TypeEnv
+unionTypeEnv (TypeEnv env1) (TypeEnv env2) = TypeEnv $ Map.union env1 env2
 
 extendTypeEnv :: TypeEnv -> (Name, Scheme) -> TypeEnv
 extendTypeEnv (TypeEnv env) (x, s) = TypeEnv $ Map.insert x s env
@@ -378,18 +386,20 @@ infer env (WhenExpr cases) = do
             s4 <- unify t2 r'
             return (s4 `composeSubst` s3 `composeSubst` s2 `composeSubst` s1, apply s4 t2)
 
+-- FIXME:
+-- match a with a -> a + 1, 'c' -> 3 end
+-- this should fail to unify, unify testtyp and all cases
 infer env (MatchExpr test cases) = do
     tv <- fresh Star
     (subst, testtyp) <- infer env test
-    foldM (inferCase testtyp) (emptySubst, tv) cases
+    foldM (inferCase testtyp) (subst, tv) cases
     where inferCase testtyp (subst, r') (ptrn, r) = do
             (pair@(name, t1), subtyps) <- inferPattern env ptrn
             (s2, t2) <- infer (env `extendTypeEnvAll` filterNamedAndGeneralize (pair:subtyps)) r
-            s3 <- unify t1 testtyp
+            s3 <- unify (apply s2 t1) testtyp
             s4 <- unify t2 r'
-            return (s4 `composeSubst` s3 `composeSubst` s2, apply s4 t2)
+            return (s4 `composeSubst` s3 `composeSubst` s2 `composeSubst` subst, apply s4 t2)
 
--- FIXME: (fn [[1], [a]] -> a) => can't infer a
 infer env (EFn name prms body scope) = do
     inferedptrns <- mapM (\(Param ptrn typ) -> inferPattern env ptrn) prms
     let allinferedtyps = concatMap (uncurry (:)) inferedptrns
@@ -400,6 +410,7 @@ infer env (EFn name prms body scope) = do
     let returntype  = foldr (->>) t1 paramtyps
     return (s1,  returntype)
 
+-- FIXME: (fn [[1], [a]] -> a) => can't infer a
 inferPattern :: TypeEnv -> Pattern -> InferM ((Maybe Name, Type), [(Maybe Name, Type)])
 inferPattern _ (BindPattern name) =
   fresh Star >>= \tvar -> return ((Just name, tvar), [])
@@ -467,7 +478,8 @@ inferExpr :: TypeEnv -> Expr -> Either InferE Scheme
 inferExpr env = runInfer . infer env
 
 inferModule :: TypeEnv -> Module -> Either InferE TypeEnv
-inferModule = undefined
+inferModule env (Module imports decls) =
+    foldr1 (liftA2 unionTypeEnv) $ map (inferDecl env) decls
 
 inferDecl :: TypeEnv -> Decl -> Either InferE TypeEnv
 inferDecl env (FnDecl fn@(Fn (Just name) _ _ _)) =

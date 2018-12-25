@@ -196,7 +196,7 @@ lowcaseIdent = caseIdent lowerChar
 -- FIXME: needs better definition
 infixIdent :: ParserM Text
 infixIdent = lexeme . try $ do
-    c <- many $ oneOf infixChars
+    c <- some $ oneOf infixChars
     return $ tpack c
     where infixChars = "-=_?+*/&^%$!@<>:|" :: String
 
@@ -232,7 +232,7 @@ fixity = do
 
 buildOpTree :: ParserM [[E.Operator (StateT ParserS (Parsec Void Text)) Expr]]
 buildOpTree =
-    reverse . map (map toOperator) . groupBy (\ f1 f2 -> fixityN f1 == fixityN f2) <$>
+    reverse . map (map toOperator) . groupBy (\f1 f2 -> fixityN f1 == fixityN f2) <$>
      sortBy (\ f1 f2 -> fixityN f1 `compare` fixityN f2)
      <$> gets stateFixity
 

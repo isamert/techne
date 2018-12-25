@@ -78,8 +78,10 @@ data DataParam
                 }
     deriving (Show, Eq, Data, Typeable)
 
-data Param = Param Pattern (Maybe Type)
-    deriving (Show, Eq, Data, Typeable)
+data Param
+    = Param { paramPtrn :: Pattern
+            , paramType :: Maybe Type
+            } deriving (Show, Eq, Data, Typeable)
 
 data Ref
     = Ref Name            -- a
@@ -140,10 +142,10 @@ data FnDef
 
 -- | Top-level declarations
 data Decl
-    = FnDecl      Fn
-    | DataDecl    Dat
-    | ConceptDecl Concept
-    | ImplDecl    Impl
+    = FnDecl      { declFn      :: Fn }
+    | DataDecl    { declDat     :: Dat }
+    | ConceptDecl { declConcept :: Concept }
+    | ImplDecl    { declImpl    :: Impl}
     deriving (Show, Eq, Data, Typeable)
 
 data Fixity
@@ -204,6 +206,10 @@ instance Semigroup Expr where
 -- ----------------------------------------------------------------------------
 
 isBindPattern (BindPattern _ ) = True
+isBindPattern  _               = False
+
+isFnDecl (FnDecl Fn{}) = True
+isFnDecl _             = False
 
 lookupConstraints typ =
     filter (\case
