@@ -34,8 +34,6 @@ import qualified Data.Set as Set
 
 --  Adaptation of: http://dev.stephendiehl.com/fun/006_hindley_milner.html
 
--- TODO: document functions :(
-
 -- ----------------------------------------------------------------------------
 -- Definitions
 -- ----------------------------------------------------------------------------
@@ -137,10 +135,6 @@ initTypeEnv = TypeEnv $ Map.fromList
     -- number utility
     , ("float2int", S $ tFloat ->> tInt  )
     , ("int2float", S $ tInt   ->> tFloat)
-
-    -- list functions
-    , ("++" , oneVarScheme $ pList tVarA ->> pList tVarA     ->> pList tVarA)
-    , ("map", twoVarScheme $ pList tVarA ->> (tVarA ->> tVarB) ->> pList tVarB)
 
     -- generic functions
     , ("==", oneVarScheme $ tVarA ->> tVarA ->> tBool)]
@@ -365,6 +359,10 @@ infer env (EList l)
             s2 <- unify t' t
             return (s2 `composeSubst` s' `composeSubst` s, apply s2 t)
 
+infer env (FixExpr e1) = do
+    tv <- fresh Star
+    inferPrim env [e1] ((tv ->> tv) ->> tv)
+
 infer env (FnApplExpr expr (Tuple tuple)) = do
     (s1, t1) <- infer env expr
     (s2, t2) <- inferPrim (apply s1 env) (fixTupleOrder tuple) t1
@@ -488,7 +486,7 @@ inferDecl _ decl = Left $ NotAnExpression decl
 inferDataCons :: TypeEnv -> Name -> [Constraint] -> (Name, [DataParam]) -> InferM [(Name, Scheme)]
 inferDataCons env typname typvars (consname, consparams) = do
     ctyp <- constyp
-    return $ (typname, close returnType):(consname, close ctyp):(map mkFieldAccessorFn consparams)
+    return $ (typname, close returnType):(consname, close ctyp):map mkFieldAccessorFn consparams
         where param2type (DataParam _ typ) = return typ
               nameOfConstraint (TypeConstraint name) = name
               constyp = foldrM (\param typ -> do
