@@ -179,7 +179,7 @@ cmdDefault line = do
         ReplExpr expr -> printAndUpdateState (desugarExpr expr) pstate
         ReplDecl decl -> do
             outputStrLn $ groom (desugarDecl decl)
-            inferRepl inferDecl decl
+            inferRepl inferDecl (desugarDecl decl)
         x -> printAndUpdateState x pstate
       Left y -> printErrBundle y
     repl

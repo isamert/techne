@@ -17,8 +17,9 @@ desugarModule (Module imports decls) = Module imports (map desugarDecl $ desugar
 
 desugarDecl :: Decl -> Decl
 desugarDecl (FnDecl fn@Fn { fnBody = body, fnScope = scope }) =
-    desugarRecursive $ FnDecl $ fn { fnBody = desugarExpr body
-                                   , fnScope = map desugarDecl scope }
+    desugarRecursive $
+      (head . desugarPtrnFns) [FnDecl $ fn { fnBody  = desugarExpr body
+                                           , fnScope = map desugarDecl scope }]
 
 desugarExpr :: Expr -> Expr
 desugarExpr = desugarPtrnFnExpr . renamePHs . desugarBinPH . desugarExprPH
@@ -113,7 +114,9 @@ convertMatch fns@(fn:rest) = if check fns
           check _               = False
 
 
+-- ----------------------------------------------------------------------------
 -- Detect recursive functions and apply fixpoint op
+-- ----------------------------------------------------------------------------
 
 desugarRecursive :: Decl -> Decl
 desugarRecursive decl@(FnDecl (Fn (Just name) prms body whr)) =
