@@ -1,4 +1,12 @@
-module Renamer where
+module Renamer
+    ( RenamerM(..)
+    , renameModule
+    , renameExpr
+    , renameDecls
+    -- utility
+    , emptyGenEnv
+    , runRenamer
+    ) where
 
 import TechnePrelude
 import Syntax
@@ -13,12 +21,17 @@ import qualified Data.Map as Map
 type GenName = Text                 -- a generated name
 type GenEnv  = Map.Map Name GenName -- a map from names to generated names
 
-data RenamerS    = RenamerS { counter :: Int, currEnv :: GenEnv }
-newtype RenamerE = NotAssigned Text deriving (Show, Eq)
+data RenamerS
+    = RenamerS { counter   :: Int
+               , currEnv   :: GenEnv
+               , allowFail :: Bool
+               } deriving (Show, Eq, Ord)
+
+newtype RenamerE = NotAssigned Text deriving (Show, Eq, Ord)
 type RenamerM a  = ExceptT RenamerE (State RenamerS) a
 
--- TODO: seems so repetetive but I have no idea about solving it, uniplate
--- is not helping I believe.
+-- FIXME: currEnv is stupid. Explicitly return a generated env.
+-- FIXME: name clashes between modules are not reported.
 
 -- NamedTElems are not renamed because there is no way to know which data type
 -- they belong to (or even we can't know if they belong to a data type or not).
@@ -32,23 +45,29 @@ type RenamerM a  = ExceptT RenamerE (State RenamerS) a
 -- ----------------------------------------------------------------------------
 
 renameModule :: Module -> GenEnv -> RenamerM Module
-renameModule (Module imports decls) env = do
-    gdecls <- resetCurrEnv >> mapM renameFnNames decls
+renameModule (Module impts decls) env = Module impts <$> renameDecls decls env
+
+renameDecls :: [Decl] -> GenEnv -> RenamerM [Decl]
+renameDecls decls env = do
+    gdecls <- resetCurrEnv >> mapM (`renameDeclNames` env) decls
     currenv <- gets currEnv
-    let newenv = Map.union currenv env -- Maybe check conflicts here before union (with other modules)
-    Module imports <$> mapM (`renameFns` env) gdecls
-    where renameFnNames (FnDecl fn@Fn {fnName=(Just name)})  = do
-            gname <- insertCurrEnv name
-            return $ FnDecl $ fn { fnName = Just gname }
-          renameFns (FnDecl fn@Fn { fnBody = body }) env = do
-              b <- renameExpr body env
-              return $ FnDecl fn { fnBody = b }
+    let newenv = Map.union currenv env
+    -- FIXME: ^^ Maybe check conflicts here before union (with other modules)
+    mapM (`renameDecl` newenv) gdecls
+        where renameDeclNames (FnDecl fn@Fn {fnName=(Just name)}) env  = do
+                gname <- insertCurrEnv name
+                return $ FnDecl $ fn { fnName = Just gname }
+              renameDeclNames decl env = return decl
+
+              renameDecl (FnDecl fn@Fn{}) env = do
+                b <- renameExpr (FnExpr fn) env
+                return $ FnDecl (fnExprFn b)
+
 
 -- ----------------------------------------------------------------------------
 -- renameExpr
 -- ----------------------------------------------------------------------------
 
--- TODO: rename PlaceHolders too
 renameExpr :: Expr -> GenEnv -> RenamerM Expr
 renameExpr (ERef name) env = do
     name <- renameFreeVar name env
@@ -57,12 +76,12 @@ renameExpr (ERef name) env = do
 renameExpr (ListExpr list) env = ListExpr <$> renameList (`renameExpr` env) list
 renameExpr (TupleExpr tuple) env = TupleExpr <$> renameTuple (`renameExpr` env) tuple
 
--- TODO: scope
 renameExpr fn@(EFn name prms_ expr_ scope) env = do
     prms <- resetCurrEnv >> renameParams
     currenv <- gets currEnv
     expr <- renameExpr expr_ (Map.union currenv env) -- union is left-biased
-    return $ EFn name prms expr scope
+    scop <- renameDecls scope env
+    return $ EFn name prms expr scop
     where renameParams = forM prms_ $ \case
             (Param ptrn typ) -> flip Param typ <$> renamePattern ptrn
 
@@ -92,9 +111,13 @@ renameExpr (BinExpr op right left) env = liftM3 BinExpr
                                                 (renameOp op env)
                                                 (renameExpr right env)
                                                 (renameExpr left env)
+
 renameExpr (UnExpr op operand) env = liftM2 UnExpr
                                             (renameOp op env)
                                             (renameExpr operand env)
+
+renameExpr (FixExpr expr) env = renameExpr expr env
+
 renameExpr x _ = return x
 
 -- ----------------------------------------------------------------------------
@@ -105,7 +128,11 @@ renameFreeVar :: Name -> GenEnv -> RenamerM GenName
 renameFreeVar name env =
     case Map.lookup name env of
       Just gname -> return gname
-      Nothing    -> throwError (NotAssigned name)
+      Nothing    -> do
+          fail <- gets allowFail
+          if fail
+             then throwError (NotAssigned name)
+             else genName
 
 renameOp :: Op -> GenEnv -> RenamerM Op
 renameOp (BinOp name) env = BinOp <$> renameFreeVar name env
@@ -133,11 +160,11 @@ renameList f (List xs) = List <$> mapM f xs
 -- RenamerM utility
 -- ----------------------------------------------------------------------------
 
-initRenamerS :: RenamerS
-initRenamerS = RenamerS { counter = 0, currEnv = Map.empty }
+runRenamer :: Bool -> RenamerM a -> Either RenamerE a
+runRenamer fail m = evalState (runExceptT m) $ initRenamerS fail
 
-runRenamer :: RenamerM a -> Either RenamerE a
-runRenamer m = evalState (runExceptT m) initRenamerS
+initRenamerS :: Bool -> RenamerS
+initRenamerS fail = RenamerS { counter = 0, currEnv = Map.empty, allowFail = fail }
 
 genName :: RenamerM GenName
 genName = do
@@ -157,3 +184,6 @@ resetCurrEnv = do
     s <- get
     put s { currEnv = Map.empty }
     return ()
+
+emptyGenEnv :: GenEnv
+emptyGenEnv = Map.empty
