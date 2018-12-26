@@ -1,12 +1,13 @@
 module Desugar
     ( desugarExpr
     , desugarDecl
-    , desugarModule)
-    where
+    , desugarModule
+    ) where
 
 import TechnePrelude
 import Syntax
 import Parser
+import Renamer
 
 import Data.Generics.Uniplate.Data
 import Data.Data (Data)
@@ -16,7 +17,8 @@ desugarModule (Module imports decls) = Module imports (map desugarDecl $ desugar
 
 desugarDecl :: Decl -> Decl
 desugarDecl (FnDecl fn@Fn { fnBody = body, fnScope = scope }) =
-    FnDecl $ fn { fnBody = desugarExpr body, fnScope = map desugarDecl scope }
+    desugarRecursive $ FnDecl $ fn { fnBody = desugarExpr body
+                                   , fnScope = map desugarDecl scope }
 
 desugarExpr :: Expr -> Expr
 desugarExpr = desugarPtrnFnExpr . renamePHs . desugarBinPH . desugarExprPH
@@ -99,13 +101,33 @@ convertMatch fns@(fn:rest) = if check fns
           paramSupply = map (\n -> "prm$" ++ tshow n) [0..]
           mkCase (Fn _ prms _ _) = mkTuplePattern $ map paramPtrn prms
 
-          mkTuplePattern []  = error "wha??"
+          mkTuplePattern []  = TuplePattern Nothing $ mkTuple []
           mkTuplePattern [x] = x
           mkTuplePattern xs  = TuplePattern Nothing $ mkTuple xs
-          mkTupleExpr []  = error "whhaaa??"
+          mkTupleExpr []  = mksRef "ZAAAXD"
           mkTupleExpr [x] = x
           mkTupleExpr xs  = TupleExpr $  mkTuple xs
 
 
           check [Fn _ prms _ _] = all (== True) $ map (isBindPattern . paramPtrn) prms
           check _               = False
+
+
+-- Detect recursive functions and apply fixpoint op
+
+desugarRecursive :: Decl -> Decl
+desugarRecursive decl@(FnDecl (Fn (Just name) prms body whr)) =
+    if isRecursive decl
+       then FnDecl $ Fn (Just name) []
+                        (FixExpr $ mkLambda (mksParam name Nothing:prms) body)
+                        (map desugarRecursive whr)
+       else decl
+
+isRecursive :: Decl -> Bool
+isRecursive fndecl = fromRight' $ runRenamer False $ do
+    [gfndecl] <- renameDecls [fndecl] emptyGenEnv
+    return $ isRecursive' gfndecl
+    where isRecursive' (FnDecl (Fn (Just name) prms body scope)) =
+            name `elem` [name | (RefExpr (Ref name)) <- universe body]
+          isRecursive' _ = False
+

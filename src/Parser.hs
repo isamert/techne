@@ -15,6 +15,7 @@ module Parser
     , colon
     -- Parsers
     , module_
+    , decl
     , expr
     -- Helpers
     , parseFile
@@ -564,7 +565,6 @@ impl = do
 fnTop :: ParserM Fn
 fnTop = do
     rword "let" <|> return ()
-    rec <- optional $ rword "rec"
     name <- identifier
     params <- getFnSignature name >>= \case
         Just sig -> pattern_`sepBy` comma >>= \pattrns ->
@@ -573,11 +573,7 @@ fnTop = do
               else return $ zipWith Param pattrns (map Just sig)
         Nothing -> params []
     equal
-    body <- expr
-    whr <- where_
-    return $ case rec of
-      Just _  -> Fn (Just name) [] (FixExpr $ mkLambda (mksParam name Nothing:params) body) whr
-      Nothing -> Fn (Just name) params body whr
+    liftM2 (Fn (Just name) params) expr where_
     where where_ = (rword "where" >> decl `sepBy` comma) <|> return []
 
 fnDefWithConstraints :: [Constraint] -> ParserM FnDef

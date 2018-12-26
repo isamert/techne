@@ -38,7 +38,7 @@ data Expr
     | LitExpr    Lit
     | ListExpr   (List Expr)
     | TupleExpr  (Tuple Expr)
-    | FnExpr     Fn
+    | FnExpr     { fnExprFn :: Fn }
     | RefExpr    Ref
     | UnExpr      { unExprOp      :: Op
                   , unExprOperand :: Expr
