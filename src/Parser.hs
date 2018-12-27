@@ -170,6 +170,9 @@ rwords = ["if", "then", "else", "elif", "skip", "return", "and", "is",
 rsymbols :: [Text]
 rsymbols = ["->", FieldAccessor]
 
+infixChars :: String
+infixChars = "-=_?+*/&^%$!@<>:|"
+
 -- | Parses given reserved word.
 -- rword "if"
 rword :: Text -> ParserM ()
@@ -202,7 +205,12 @@ infixIdent :: ParserM Text
 infixIdent = lexeme . try $ do
     c <- some $ oneOf infixChars
     return $ tpack c
-    where infixChars = "-=_?+*/&^%$!@<>:|" :: String
+
+callOpIdent :: ParserM Text
+callOpIdent = lexeme . try $ do
+    c <- some $ oneOf $ '.':infixChars
+    return $ tpack c
+
 
 -- | A generic parameter identifier like ~a.
 genericIdent :: ParserM Text
@@ -288,16 +296,29 @@ decl = FnDecl <$> fnTop
 -- ----------------------------------------------------------------------------
 
 typeWithConstraints :: [Constraint] -> ParserM Type
-typeWithConstraints cnsts = liftM2 (appliedType TyVar) genericIdent typeParams
+typeWithConstraints cnsts = genericType
+                              <|> esotericType
                               <|> liftM2 (mkType cnsts) identifier typeParams
     where typeParams = optional . angles $ typeWithConstraints cnsts `sepBy` comma
+          appliedType cns typname typprms = applyDataType cns typname $ fromMaybe [] typprms
           mkType cnsts tname typprms  =
               case lookupConstraints tname cnsts of
                 []                    -> appliedType TyCon tname typprms
                 [TypeConstraint name] -> appliedType TyVar name typprms
                 xs                    -> appliedType TyVar tname typprms
                 -- TODO: after implementing typeclasses, assign constraints here
-          appliedType cns typname typprms = applyDataType cns typname $ fromMaybe [] typprms
+
+          genericType = liftM2 (appliedType TyVar) genericIdent typeParams
+          esotericType = typeList <|> try typeTuple <|> typeArr
+          typeTuple = do
+              tuple <- parens $ typeWithConstraints [] `sepBy1` comma
+              return $ applyTuple tuple
+          typeList = do
+              tvar <- brackets $ typeWithConstraints cnsts
+              return $ pList tvar
+          typeArr = do
+              typs <- parens $ typeWithConstraints cnsts `sepBy1` wArrow
+              return $ foldl1 (->>) typs
 
 -- | Parse `A a`, return (a, A)
 constraint :: ParserM Constraint
@@ -307,7 +328,7 @@ constraint = do
     return $ ConceptConstraint name concept
 
 -- | Parse `A a, B b, C c`
--- | returns [(a, A), (b, B)]
+-- returns [(a, A), (b, B)]
 constraints :: ParserM [Constraint]
 constraints  = constraint `sepBy`  comma
 constraints1 = constraint `sepBy1` comma
@@ -405,7 +426,7 @@ fnAppl = liftM2 FnApplExpr
 fnCall :: ParserM Expr
 fnCall = do
     first <- fnCallTerm
-    pairs <- many $ try (liftM2 (,) (dot <|> oper) (try fnAppl <|> refExpr))
+    pairs <- many $ try (liftM2 (,) oper (try fnAppl <|> refExpr))
     foldlM concatFn first pairs
     where concatFn (TupleExpr tuple) (".", fnappl) =
             return $ fnappl { fnApplTuple = tuple <> fnApplTuple fnappl }
@@ -417,7 +438,7 @@ fnCall = do
                                           mkLambda [mksParam name Nothing]
                                                    (app `prependFnAppl` IndexedTElem (mksRef name))])
           oper = do
-              x <- infixIdent
+              x <- callOpIdent
               hasop <- hasOp x
               if hasop || x `elem` rsymbols
                  then fail "a call operator but found an infix operator or a reserved op"
@@ -567,16 +588,24 @@ impl = do
 fnTop :: ParserM Fn
 fnTop = do
     rword "let" <|> return ()
-    name <- identifier
-    params <- getFnSignature name >>= \case
-        Just sig -> pattern_`sepBy` comma >>= \pattrns ->
-            if length pattrns /= (length sig - 1)
-              then fail "Parameter count differs from function definition"
-              else return $ zipWith Param pattrns (map Just sig)
-        Nothing -> params []
+    fn <- try fnInfix <|> fn
     equal
-    liftM2 (Fn (Just name) params) expr where_
+    liftM2 fn expr where_
     where where_ = (rword "where" >> decl `sepBy` comma) <|> return []
+          fnInfix = do -- TODO: check definition?
+            prm1 <- param []
+            name <- callOpIdent
+            prm2 <- param []
+            return $ (Fn (Just name) [prm1, prm2])
+          fn = do
+            name <- identifier
+            params <- getFnSignature name >>= \case
+                Just sig -> pattern_`sepBy` comma >>= \pattrns ->
+                    if length pattrns /= (length sig - 1)
+                      then fail "Parameter count differs from function definition"
+                      else return $ zipWith Param pattrns (map Just sig)
+                Nothing -> params []
+            return $ (Fn (Just name) params)
 
 fnDefWithConstraints :: [Constraint] -> ParserM FnDef
 fnDefWithConstraints constraints = do

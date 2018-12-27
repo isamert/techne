@@ -496,6 +496,8 @@ inferDecl _ decl = Left $ NotAnExpression decl
 
 -- FIXME: this only produces rank-1 kind. To produce rank-n kinds
 -- I probably need to look inside the data definition and infer from there.
+-- FIXME: do not add type itself to type environment use seperate TypeConsEnv?
+--        and also check if they exist in param2type
 inferDataCons :: TypeEnv -> Name -> [Constraint] -> (Name, [DataParam]) -> InferM [(Name, Scheme)]
 inferDataCons env typname typvars (consname, consparams) = do
     ctyp <- constyp
