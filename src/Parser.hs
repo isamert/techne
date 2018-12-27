@@ -167,6 +167,9 @@ rwords :: [Text]
 rwords = ["if", "then", "else", "elif", "skip", "return", "and", "is",
            "let", "or", "while", "when", "use", "from", "data", "fn"]
 
+rsymbols :: [Text]
+rsymbols = ["->", FieldAccessor]
+
 -- | Parses given reserved word.
 -- rword "if"
 rword :: Text -> ParserM ()
@@ -416,8 +419,8 @@ fnCall = do
           oper = do
               x <- infixIdent
               hasop <- hasOp x
-              if hasop || x == FieldAccessor
-                 then fail "a call operator but found an infix operator or a field accessor"
+              if hasop || x `elem` rsymbols
+                 then fail "a call operator but found an infix operator or a reserved op"
                  else return x
 
 expr :: ParserM Expr
@@ -482,13 +485,13 @@ lambdaExpr = FnExpr <$> lambda
 when_ :: ParserM Expr
 when_ = do
     rword "when"
-    predicate <- Just <$> try (expr <* rword "is") <|> return Nothing
-    pairs <- liftM2 (,) (stuff predicate) (wArrow >> expr) `sepBy` comma
+    predicate <- optional $ try (expr <* rword "is")
+    pairs <- liftM2 (,) (mkPred predicate) (symbol "->" >> expr) `sepBy` comma
     rword "end"
     return $ WhenExpr pairs
-    where stuff pred = case pred of
+    where mkPred pred = case pred of
                          Just x  -> fmap (mkEqCheck x) expr
-                         Nothing -> expr
+                         Nothing -> fmap (mkEqCheck $ mkBool True) expr
 
 match_ :: ParserM Expr
 match_ = do
@@ -499,7 +502,6 @@ match_ = do
     rword "end"
     return $ MatchExpr predicate pairs
 
--- FIXME: nested if's need an terminator (like end)
 -- FIXME: else
 if_ :: ParserM Expr
 if_ = do
@@ -511,6 +513,7 @@ if_ = do
         true <- rword "then" >> expr
         return (pred, true)
     els <- rword "else" >> expr
+    rword "end"
     return $ WhenExpr ((test, true) : pairs)
 
 -- ----------------------------------------------------------------------------

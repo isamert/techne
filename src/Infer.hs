@@ -382,23 +382,24 @@ infer env (WhenExpr cases) = do
     where inferCase (subst, r') (c, r) = do
             (s1, t1) <- infer env c
             (s2, t2) <- infer env r
-            s3 <- unify t1 tBool
-            s4 <- unify t2 r'
-            return (s4 `composeSubst` s3 `composeSubst` s2 `composeSubst` s1, apply s4 t2)
+            s3 <- unify (apply s2 t1) tBool
+            s4 <- unify (apply s3 t2) r'
+            return (s4 `composeSubst` s3 `composeSubst` s2 `composeSubst` s1
+                   , apply (s4 `composeSubst` s3 `composeSubst` s1) t2)
 
--- FIXME:
--- match a with a -> a + 1, 'c' -> 3 end
--- this should fail to unify, unify testtyp and all cases
 infer env (MatchExpr test cases) = do
     tv <- fresh Star
     (subst, testtyp) <- infer env test
-    foldM (inferCase testtyp) (subst, tv) cases
-    where inferCase testtyp (subst, r') (ptrn, r) = do
+    (s, testtyp, rtype) <- foldM inferCase (subst, testtyp, tv) cases
+    return (s, rtype)
+    where inferCase (subst, testtyp, exprtyp') (ptrn, exprtyp) = do
             (pair@(name, t1), subtyps) <- inferPattern env ptrn
-            (s2, t2) <- infer (env `extendTypeEnvAll` filterNamedAndGeneralize (pair:subtyps)) r
+            (s2, t2) <- infer (env `extendTypeEnvAll` filterNamedAndGeneralize (pair:subtyps)) exprtyp
             s3 <- unify (apply s2 t1) testtyp
-            s4 <- unify t2 r'
-            return (s4 `composeSubst` s3 `composeSubst` s2 `composeSubst` subst, apply s4 t2)
+            s4 <- unify (apply s3 t2) exprtyp'
+            return (s4 `composeSubst` s3 `composeSubst` s2 `composeSubst` subst
+                   , apply s2 t1
+                   , apply (s4 `composeSubst` s3) t2)
 
 infer env (EFn name prms body scope) = do
     inferedptrns <- mapM (\(Param ptrn typ) -> inferPattern env ptrn) prms

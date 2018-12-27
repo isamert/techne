@@ -239,9 +239,12 @@ mkLambda prms body = FnExpr $
 mkTuple :: [a] -> Tuple a
 mkTuple xs = Tuple $ map IndexedTElem xs
 
-
 mkEqCheck :: Expr -> Expr -> Expr
 mkEqCheck = BinExpr (BinOp "==")
+
+mkBool :: Bool -> Expr
+mkBool True  = mksRef "True"
+mkBool False = mksRef "False"
 
 -- ----------------------------------------------------------------------------
 -- Predefined patterns for easy access

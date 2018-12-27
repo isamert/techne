@@ -21,6 +21,8 @@ desugarDecl (FnDecl fn@Fn { fnBody = body, fnScope = scope }) =
       (head . desugarPtrnFns) [FnDecl $ fn { fnBody  = desugarExpr body
                                            , fnScope = map desugarDecl scope }]
 
+desugarDecl x = x
+
 desugarExpr :: Expr -> Expr
 desugarExpr = desugarPtrnFnExpr . renamePHs . desugarBinPH . desugarExprPH
 
