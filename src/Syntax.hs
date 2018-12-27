@@ -250,7 +250,7 @@ mkBool False = mksRef "False"
 -- Predefined patterns for easy access
 -- ----------------------------------------------------------------------------
 
-pattern FieldAccessor = "-:"
+pattern FieldAccessor = "::"
 
 pattern EUnary  name expr         = UnExpr    (UnOp    name) expr
 pattern EBinary name exprl exprr  = BinExpr   (BinOp   name) exprl exprr

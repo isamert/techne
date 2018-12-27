@@ -28,11 +28,13 @@ instance Pretty TVar where
 instance Pretty TCon where
     pretty (TC tv kind) = pretty tv <+> pretty kind
 
-pattern Arrow = (TCon (TC "->" (KArr Star (KArr Star Star))))
+pattern TArrow = (TCon (TC "->" (KArr Star (KArr Star Star))))
+pattern TList = (TCon (TC "[]" (KArr Star Star)))
 instance Pretty Type where
     pretty (TVar (TV tv kind)) = prettyTV tv
     pretty (TCon (TC tc kind)) = pretty tc
-    pretty (TAp Arrow t)       = pretty t <+> "->"
+    pretty (TAp TList t)       = "[" ++ pretty t ++ "]"
+    pretty (TAp TArrow t)      = pretty t <+> "->"
     pretty (TAp t t')          = pretty t <+> pretty t'
 
 instance Pretty Scheme where

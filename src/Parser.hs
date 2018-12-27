@@ -454,21 +454,20 @@ fnCallTerm = when_
               <|> refExpr
 
 fnApplTerm :: ParserM Expr
-fnApplTerm =  try fieldAccessor
-                <|> refExpr
+fnApplTerm =  refExpr
                 <|> parens expr
-    where fieldAccessor = do
-            x1 <- some alphaNumChar
-            x2 <- string FieldAccessor
-            x3 <- some alphaNumChar
-            return . RefExpr . Ref $ tpack x1 ++ x2 ++ tpack x3
 
 -- ----------------------------------------------------------------------------
 -- Local exprs
 -- ----------------------------------------------------------------------------
 
 refExpr :: ParserM Expr
-refExpr = RefExpr <$> ref
+refExpr = try fieldAccessor <|> (RefExpr <$> ref)
+    where fieldAccessor = do
+            x1 <- some alphaNumChar
+            x2 <- string FieldAccessor
+            x3 <- some alphaNumChar
+            return . RefExpr . Ref $ tpack x1 ++ x2 ++ tpack x3
 
 tupleExpr :: ParserM Expr
 tupleExpr = TupleExpr <$> tuple expr
@@ -581,7 +580,7 @@ fnTop = do
 
 fnDefWithConstraints :: [Constraint] -> ParserM FnDef
 fnDefWithConstraints constraints = do
-    fnname <- try $ identifier <* colon
+    fnname <- try $ identifier <* (colon >> notFollowedBy (colon))
     lclCnsts <- constraintsWithArrow
     let cnsts = constraints ++ lclCnsts
     types <- typeWithConstraints cnsts `sepBy1` wArrow
