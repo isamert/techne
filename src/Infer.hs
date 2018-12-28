@@ -1,3 +1,4 @@
+{-# LANGUAGE RankNTypes, PatternSynonyms, ViewPatterns #-}
 module Infer
     ( -- Functions
       inferExpr
@@ -11,17 +12,8 @@ module Infer
     , InferE(..)
     -- Utils
     , generalize
-    , (->>)
     , pList
     , applyTuple
-    , tVarA
-    , tVarB
-    , tVarC
-    , tInt
-    , tFloat
-    , tBool
-    , tChar
-    , tFrac
     , applyDataType
     ) where
 
@@ -35,6 +27,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
 --  Adaptation of: http://dev.stephendiehl.com/fun/006_hindley_milner.html
+-- FIXME: generate tuples and datatypes programatically
 
 -- ----------------------------------------------------------------------------
 -- Definitions
@@ -60,39 +53,15 @@ type Subst = Map.Map TVar Type
 -- Type utilities
 -- ----------------------------------------------------------------------------
 
-infixr -*>
-infixr ->>
-
--- | Kind of a type like: Star -*> Star -*> Star
-(-*>) :: Kind -> Kind -> Kind
-a -*> b = KArr a b
-
--- | Function type like: tInt ->> tInt, synonymous for "->"
-(->>) :: Type -> Type -> Type
-a ->> b = TAp (TAp tArrow a) b
-
--- Type definitions
-tVarA = TVar (TV "a" Star)
-tVarB = TVar (TV "b" Star)
-tVarC = TVar (TV "c" Star)
-
-tBool  = T "bool"
-tInt   = T "int"
-tFloat = T "float"
-tChar  = T "char"
-tFrac  = T "frac"
-tArrow = TyCon "->" $ Star -*> Star -*> Star
-tList  = TyCon "[]" $ Star -*> Star
-
-tDataType1 c name = c name $ Star -*> Star
-tDataType2 c name = c name $ Star -*> Star -*> Star
-tDataType3 c name = c name $ Star -*> Star -*> Star -*> Star
-tDataType4 c name = c name $ Star -*> Star -*> Star -*> Star -*> Star
-tDataType5 c name = c name $ Star -*> Star -*> Star -*> Star -*> Star -*> Star
-tDataType6 c name = c name $ Star -*> Star -*> Star -*> Star -*> Star -*> Star -*> Star
+tDataType1 c name = c name $ Star :-*> Star
+tDataType2 c name = c name $ Star :-*> Star :-*> Star
+tDataType3 c name = c name $ Star :-*> Star :-*> Star :-*> Star
+tDataType4 c name = c name $ Star :-*> Star :-*> Star :-*> Star :-*> Star
+tDataType5 c name = c name $ Star :-*> Star :-*> Star :-*> Star :-*> Star :-*> Star
+tDataType6 c name = c name $ Star :-*> Star :-*> Star :-*> Star :-*> Star :-*> Star :-*> Star
 
 -- Polymorphic types that you can apply a type, like [*]
-pList                       = TAp tList
+pList                       = TAp TList
 pDataType1 cns name a       = TAp (tDataType1 cns name) a
 pDataType2 cns name a b     = TAp (TAp (tDataType2 cns name) a) b
 pDataType3 cns name a b c   = TAp (TAp (tDataType3 cns name) a) (TAp b c)
@@ -113,36 +82,36 @@ class Typed a where
     typeOf :: a -> Type
 
 instance Typed Lit where
-    typeOf (StrLit  _) = pList tChar
-    typeOf (ChrLit  _) = tChar
-    typeOf (IntLit  _) = tInt
-    typeOf (FltLit  _) = tFloat
-    typeOf (FracLit _) = tFrac
+    typeOf (StrLit  _) = pList TChar
+    typeOf (ChrLit  _) = TChar
+    typeOf (IntLit  _) = TInt
+    typeOf (FltLit  _) = TFloat
+    typeOf (FracLit _) = TFrac
 
 -- FIXME: implement type classes and get rid of different functions for Nums
 initTypeEnv :: TypeEnv
 initTypeEnv = TypeEnv $ Map.fromList
     [ -- int functions:
-      ("+", S $ tInt ->> tInt ->> tInt  )
-    , ("-", S $ tInt ->> tInt ->> tInt  )
-    , ("*", S $ tInt ->> tInt ->> tInt  )
-    , ("/", S $ tInt ->> tInt ->> tFloat)
+      ("+", S $ TInt :->> TInt :->> TInt  )
+    , ("-", S $ TInt :->> TInt :->> TInt  )
+    , ("*", S $ TInt :->> TInt :->> TInt  )
+    , ("/", S $ TInt :->> TInt :->> TFloat)
 
     -- float functions
-    , ("+.", S $ tFloat ->> tFloat ->> tFloat)
-    , ("-.", S $ tFloat ->> tFloat ->> tFloat)
-    , ("*.", S $ tFloat ->> tFloat ->> tFloat)
-    , ("/.", S $ tFloat ->> tFloat ->> tFloat)
+    , ("+.", S $ TFloat :->> TFloat :->> TFloat)
+    , ("-.", S $ TFloat :->> TFloat :->> TFloat)
+    , ("*.", S $ TFloat :->> TFloat :->> TFloat)
+    , ("/.", S $ TFloat :->> TFloat :->> TFloat)
 
     -- number utility
-    , ("float2int", S $ tFloat ->> tInt  )
-    , ("int2float", S $ tInt   ->> tFloat)
+    , ("float2int", S $ TFloat :->> TInt  )
+    , ("int2float", S $ TInt   :->> TFloat)
 
      -- list functions
-    , ("++" , oneVarScheme $ pList tVarA ->> pList tVarA ->> pList tVarA)
+    , ("++" , oneVarScheme $ pList TVarA :->> pList TVarA :->> pList TVarA)
 
     -- generic functions
-    , ("==", oneVarScheme $ tVarA ->> tVarA ->> tBool)]
+    , ("==", oneVarScheme $ TVarA :->> TVarA :->> TBool)]
 
     where oneVarScheme = Forall [TV "a" Star]
           twoVarScheme = Forall [TV "a" Star, TV "b" Star]
@@ -332,7 +301,7 @@ inferPrim env l t = do
     return (s2 `composeSubst` s1, apply s2 tv)
     where inferStep (s, tf) exp = do
             (s', t) <- infer (apply s env) exp
-            return (s' `composeSubst` s, tf . (t ->>))
+            return (s' `composeSubst` s, tf . (t :->>))
 
 infer :: TypeEnv -> Expr -> InferM (Subst, Type)
 infer env (ERef name) =  lookupEnv env name
@@ -369,7 +338,7 @@ infer env (EList l)
 
 infer env (FixExpr e1) = do
     tv <- fresh Star
-    inferPrim env [e1] ((tv ->> tv) ->> tv)
+    inferPrim env [e1] ((tv :->> tv) :->> tv)
 
 infer env (FnApplExpr expr (Tuple tuple)) = do
     (s1, t1) <- infer env expr
@@ -382,7 +351,7 @@ infer env (WhenExpr cases) = do
     where inferCase (subst, r') (c, r) = do
             (s1, t1) <- infer env c
             (s2, t2) <- infer env r
-            s3 <- unify (apply s2 t1) tBool
+            s3 <- unify (apply s2 t1) TBool
             s4 <- unify (apply s3 t2) r'
             return (s4 `composeSubst` s3 `composeSubst` s2 `composeSubst` s1
                    , apply (s4 `composeSubst` s3 `composeSubst` s1) t2)
@@ -408,7 +377,7 @@ infer env (EFn name prms body scope) = do
     (s1, t1) <- infer env' body
     let nametyppair = map fst inferedptrns
         paramtyps   = apply s1 (map snd nametyppair)
-    let returntype  = foldr (->>) t1 paramtyps
+    let returntype  = foldr (:->>) t1 paramtyps
     return (s1,  returntype)
 
 -- FIXME: (fn [[1], [a]] -> a) => can't infer a
@@ -462,7 +431,7 @@ inferPattern env (UnpackPattern name typname (Tuple tuple)) = do
     return ((name, rettype), subtyps)
     where inferStep (t, subptrns) exp = do
             (ptrn@(_, t'), subptrns') <- inferPattern env exp
-            return (t . (t' ->>), (ptrn:subptrns) ++ subptrns')
+            return (t . (t' :->>), (ptrn:subptrns) ++ subptrns')
 
 -- ----------------------------------------------------------------------------
 -- Runners
@@ -506,8 +475,8 @@ inferDataCons env typname typvars (consname, consparams) = do
               nameOfConstraint (TypeConstraint name) = name
               constyp = foldrM (\param typ -> do
                                                 prmtyp <- param2type param
-                                                return $ prmtyp ->> typ) returnType consparams
+                                                return $ prmtyp :->> typ) returnType consparams
 
               returnType = applyDataType TyCon typname (map (Tv . nameOfConstraint) typvars)
               mkFieldAccessorFn (DataParam fieldname fieldtyp) =
-                (typname ++ FieldAccessor ++ fieldname, close $ returnType ->> fieldtyp)
+                (typname ++ FieldAccessor ++ fieldname, close $ returnType :->> fieldtyp)

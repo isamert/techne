@@ -318,7 +318,7 @@ typeWithConstraints cnsts = genericType
               return $ pList tvar
           typeArr = do
               typs <- parens $ typeWithConstraints cnsts `sepBy1` wArrow
-              return $ foldl1 (->>) typs
+              return $ foldl1 (:->>) typs
 
 -- | Parse `A a`, return (a, A)
 constraint :: ParserM Constraint

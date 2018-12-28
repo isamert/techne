@@ -8,6 +8,10 @@ import TechnePrelude
 import Data.Data hiding (Fixity)
 import qualified Data.Map as Map
 
+infixr `TAp`
+infixr :-*>
+infixr :->>
+
 -- Some types for clarification
 type Name        = Text
 type Path        = Text
@@ -69,8 +73,6 @@ data Type
     | TCon TCon
     | TAp  Type Type
     deriving (Show, Eq, Ord, Data, Typeable)
-
-infixr `TAp`
 
 data DataParam
     = DataParam { dataPrmName :: Name
@@ -268,9 +270,30 @@ pattern EFn name prms body scope  = FnExpr (Fn name prms body scope)
 pattern TyCon a s = TCon (TC a s)
 pattern TyVar a s = TVar (TV a s)
 
+-- Type definitions
+pattern TVarA = TVar (TV "a" Star)
+pattern TVarB = TVar (TV "b" Star)
+pattern TVarC = TVar (TV "c" Star)
+
+pattern TBool  = T "bool"
+pattern TInt   = T "int"
+pattern TFloat = T "float"
+pattern TChar  = T "char"
+pattern TFrac  = T "frac"
+pattern TArrow = TyCon "->" (Star :-*> Star :-*> Star)
+pattern TList  = TyCon "[]" (Star :-*> Star)
+
 -- A concrete type
 pattern T a = TCon (TC a Star)
+
 -- A type scheme for a concrete type
 pattern S a = Forall [] a
+
 -- A type variable with kind *
 pattern Tv a = (TVar (TV a Star))
+
+-- | Kind of a type like: Star :-*> Star :-*> Star
+pattern a :-*> b = KArr a b
+
+-- | Function type like: tInt :->> tInt, synonymous for "->"
+pattern a :->> b = TAp (TAp TArrow a) b
