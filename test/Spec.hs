@@ -7,6 +7,7 @@ import Control.Monad.State.Lazy
 import Syntax
 import Parser
 import Infer
+import Desugar
 
 main = runTestTT inferTests
 
@@ -16,7 +17,7 @@ main = runTestTT inferTests
 -- ----------------------------------------------------------------------------
 
 testInfer name exp typ = TestLabel name $ TestCase $ assertEqual name
-                                      (inferExpr emptyTypeEnv $ gparse expr exp)
+                                      (inferExpr emptyTypeEnv $ desugarExpr $ gparse expr exp)
                                       (Right $ generalize emptyTypeEnv typ)
 
 inferTests = TestList
@@ -30,7 +31,7 @@ inferTests = TestList
   , testInfer "snd" "(fn (a,b) -> b)" (applyTuple [TVarA, TVarB] :->> TVarB)
   , testInfer "tuple param" "(fn (a@2,b) -> a)" (applyTuple [TInt, TVarA] :->> TInt)
   , testInfer "tuple param 2" "(fn (a,b@[1,2]) -> b)" (applyTuple [TVarA, pList TInt] :->> pList TInt)
-  , testInfer "match and pattern" "(fn a -> match a with 3 -> 3 end)(3)" (TInt)
+  , testInfer "match and pattern" "(fn a -> match a with 3 -> 3 end)(3)" TInt
   , testInfer "match and pattern 2" "(fn a -> match a with b -> [b,3]  end)" (TInt :->> pList TInt)
   , testInfer "match and pattern 3" "(fn a -> match a with b -> [b,3]  end)" (TInt :->> pList TInt)
   ]

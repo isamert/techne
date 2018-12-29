@@ -185,7 +185,7 @@ wArrow = symbol "->" <|> symbol "→"
 identifier :: ParserM Text
 identifier = lexeme $ try (tpack <$> some alphaNumChar >>= check)
     where check w
-            | w `elem` rwords = fail $ show w ++ " is a keyword and cannot be an identifier."
+            | w `elem` rwords || w `elem` rsymbols = fail $ show w ++ " is a keyword and cannot be an identifier."
             | otherwise = return w
 
 caseIdent :: ParserM Char -> ParserM Text
@@ -340,32 +340,34 @@ constraintsWithArrow = do
     unless (null cnsts) $ void (symbol "=>")
     return cnsts
 
-pattern_ :: ParserM Pattern
-pattern_ = do
+pattern_ :: [Constraint] -> ParserM Pattern
+pattern_ cnsts = do
     bindname <- try (Just <$> identifier <* symbol "@") <|> return Nothing
     ElsePattern  bindname <$ rword "else"
       <|> RestPattern bindname <$ symbol "..."
       <|> fmap (LitPattern bindname) lit
       <|> fmap (RegexPattern bindname) regexLit
-      <|> fmap (TuplePattern bindname) (tuple pattern_)
-      <|> fmap (ListPattern bindname) (list pattern_)
+      <|> fmap (TuplePattern bindname) (tuple $ pattern_ cnsts)
+      <|> fmap (ListPattern bindname) (list $ pattern_ cnsts)
       <|> try (liftM2 (UnpackPattern bindname)
                       dataIdent
-                      (try (tuple pattern_) <|> return (Tuple [])))
+                      (try (tuple $ pattern_ cnsts) <|> return (Tuple [])))
       <|> case bindname of
             Just _  -> fail "Cannot bind pattern to itself"
-            Nothing -> BindPattern <$> identifier
+            Nothing -> liftM2 BindPattern identifier (optionalType cnsts)
 
 -- | Parse `a: Type` or `a`, or `~a`. Handles type constraints if given any.
 param :: [Constraint] -> ParserM Param
 param cnsts = do
-    pattrn <- pattern_
-    typ <- optional (colon >> typeWithConstraints cnsts)
-    return $ Param pattrn typ
+    pattrn <- pattern_ cnsts
+    return $ Param pattrn
 
 -- TODO: check for name conflicts
 params :: [Constraint] -> ParserM [Param]
 params cnsts = param cnsts `sepBy` comma
+
+optionalType :: [Constraint] -> ParserM (Maybe Type)
+optionalType cnsts = optional (colon >> typeWithConstraints cnsts)
 
 -- Parse a type parameter
 typeconstraint :: ParserM Constraint
@@ -518,7 +520,7 @@ match_ = do
     rword "match"
     predicate <- expr
     rword "with"
-    pairs <- liftM2 (,) pattern_ (wArrow >> expr) `sepBy` comma
+    pairs <- liftM2 (,) (pattern_ []) (wArrow >> expr) `sepBy` comma
     rword "end"
     return $ MatchExpr predicate pairs
 
@@ -596,20 +598,15 @@ fnTop = do
             prm1 <- param []
             name <- callOpIdent
             prm2 <- param []
-            return $ (Fn (Just name) [prm1, prm2])
+            return $ Fn (Just name) [prm1, prm2]
           fn = do
             name <- identifier
-            params <- getFnSignature name >>= \case
-                Just sig -> pattern_`sepBy` comma >>= \pattrns ->
-                    if length pattrns /= (length sig - 1)
-                      then fail "Parameter count differs from function definition"
-                      else return $ zipWith Param pattrns (map Just sig)
-                Nothing -> params []
-            return $ (Fn (Just name) params)
+            params <- params []
+            return $ Fn (Just name) params
 
 fnDefWithConstraints :: [Constraint] -> ParserM FnDef
 fnDefWithConstraints constraints = do
-    fnname <- try $ identifier <* (colon >> notFollowedBy (colon))
+    fnname <- try $ identifier <* (colon >> notFollowedBy (oneOf infixChars))
     lclCnsts <- constraintsWithArrow
     let cnsts = constraints ++ lclCnsts
     types <- typeWithConstraints cnsts `sepBy1` wArrow

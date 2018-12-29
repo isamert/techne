@@ -83,7 +83,7 @@ renameExpr fn@(EFn name prms_ expr_ scope) env = do
     scop <- renameDecls scope env
     return $ EFn name prms expr scop
     where renameParams = forM prms_ $ \case
-            (Param ptrn typ) -> flip Param typ <$> renamePattern ptrn
+            (Param ptrn) -> Param <$> renamePattern ptrn
 
 renameExpr (FnApplExpr expr tuple) env =
     liftM2 FnApplExpr
@@ -139,7 +139,7 @@ renameOp (BinOp name) env = BinOp <$> renameFreeVar name env
 renameOp (UnOp  name) env = UnOp <$> renameFreeVar name env
 
 renamePattern :: Pattern -> RenamerM Pattern
-renamePattern (BindPattern name) = BindPattern <$> insertCurrEnv name
+renamePattern (BindPattern name typ) = flip BindPattern typ <$> insertCurrEnv name
 renamePattern (UnpackPattern name dataname tuple) =
     UnpackPattern name dataname <$> renameTuple renamePattern tuple
 renamePattern ptrn =

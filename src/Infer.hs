@@ -371,7 +371,7 @@ infer env (MatchExpr test cases) = do
                    , apply (s4 `composeSubst` s3) t2)
 
 infer env (EFn name prms body scope) = do
-    inferedptrns <- mapM (\(Param ptrn typ) -> inferPattern env ptrn) prms
+    inferedptrns <- mapM (inferPattern env . paramPtrn) prms
     let allinferedtyps = concatMap (uncurry (:)) inferedptrns
         env' = env `extendTypeEnvAll` filterNamedAndGeneralize allinferedtyps
     (s1, t1) <- infer env' body
@@ -382,7 +382,7 @@ infer env (EFn name prms body scope) = do
 
 -- FIXME: (fn [[1], [a]] -> a) => can't infer a
 inferPattern :: TypeEnv -> Pattern -> InferM ((Maybe Name, Type), [(Maybe Name, Type)])
-inferPattern _ (BindPattern name) =
+inferPattern _ (BindPattern name typ) = -- FIXME: check user type exists and use it instead of tv
   fresh Star >>= \tvar -> return ((Just name, tvar), [])
 
 inferPattern _ (ElsePattern name) =

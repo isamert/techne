@@ -76,14 +76,12 @@ data Type
 
 data DataParam
     = DataParam { dataPrmName :: Name
-                , dataPrmType :: Type -- FIXME: replace Type with Text
+                , dataPrmType :: Type
                 }
     deriving (Show, Eq, Data, Typeable)
 
-data Param
-    = Param { paramPtrn :: Pattern
-            , paramType :: Maybe Type
-            } deriving (Show, Eq, Data, Typeable)
+newtype Param = Param { paramPtrn :: Pattern }
+    deriving (Show, Eq, Data, Typeable)
 
 data Ref
     = Ref Name            -- a
@@ -91,7 +89,7 @@ data Ref
     deriving (Show, Eq, Ord, Data, Typeable)
 
 data Pattern
-    = BindPattern   Name                              -- a
+    = BindPattern   Name (Maybe Type)                 -- a
     | ElsePattern   { ptrnName     :: Maybe Name }    -- else ->
     | RestPattern   { ptrnName     :: Maybe Name }    -- ...
     | LitPattern    { ptrnName     :: Maybe Name
@@ -207,8 +205,8 @@ instance Semigroup Expr where
 -- utility functions
 -- ----------------------------------------------------------------------------
 
-isBindPattern (BindPattern _ ) = True
-isBindPattern  _               = False
+isBindPattern (BindPattern _ _) = True
+isBindPattern  _                = False
 
 isFnDecl (FnDecl Fn{}) = True
 isFnDecl _             = False
@@ -226,7 +224,7 @@ prependFnAppl fnAppl expr = fnAppl { fnApplTuple = fnApplTuple fnAppl `prependTu
 -- ----------------------------------------------------------------------------
 
 mksParam :: Text -> Maybe Type -> Param
-mksParam name = Param (BindPattern name)
+mksParam name typ = Param (BindPattern name typ)
 
 mksRef :: Text -> Expr
 mksRef name = RefExpr $ Ref name

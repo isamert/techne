@@ -97,24 +97,27 @@ convertMatch fns@(fn:rest) = if check fns
                                 then fn
                                 else fn { fnParams = params, fnBody = body }
     where body = MatchExpr test cases
-          test = mkTupleExpr $ map (\(Param (BindPattern name) _) -> mksRef name) params
+          test = mkTupleExpr $ map (\(Param (BindPattern name _)) -> mksRef name) params
           cases = zip (map mkCase fns) (map fnBody fns)
-          params = zipWith (\prm (Param _ typ) -> mksParam prm typ) paramSupply (fnParams fn)
+          params = zipWith (\prm -> \case
+                                      (Param (BindPattern _ typ)) -> mksParam prm typ
+                                      (Param _)                   -> mksParam prm Nothing)
+                           paramSupply
+                           (fnParams fn)
 
           paramSupply = map (\n -> "prm$" ++ tshow n) [0..]
           mkCase (Fn _ prms _ _) = mkTuplePattern $ map paramPtrn prms
 
-          mkTuplePattern []  = TuplePattern Nothing $ mkTuple []
+          mkTuplePattern []  = error "mkTuplePattern []"
           mkTuplePattern [x] = x
           mkTuplePattern xs  = TuplePattern Nothing $ mkTuple xs
-          mkTupleExpr []  = mksRef "ZAAAXD"
+          mkTupleExpr []  = error "mkTupleExpr []"
           mkTupleExpr [x] = x
           mkTupleExpr xs  = TupleExpr $  mkTuple xs
 
 
           check [Fn _ prms _ _] = all (== True) $ map (isBindPattern . paramPtrn) prms
           check _               = False
-
 
 -- ----------------------------------------------------------------------------
 -- Detect recursive functions and apply fixpoint op
