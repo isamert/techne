@@ -115,7 +115,6 @@ convertMatch fns@(fn:rest) = if check fns
           mkTupleExpr [x] = x
           mkTupleExpr xs  = TupleExpr $  mkTuple xs
 
-
           check [Fn _ prms _ _] = all (== True) $ map (isBindPattern . paramPtrn) prms
           check _               = False
 
@@ -132,9 +131,7 @@ desugarRecursive decl@(FnDecl (Fn (Just name) prms body whr)) =
        else decl
 
 isRecursive :: Decl -> Bool
-isRecursive fndecl = fromRight' $ runRenamer False $ do
-    [gfndecl] <- renameDecls [fndecl] emptyGenEnv
-    return $ isRecursive' gfndecl
+isRecursive fndecl = isRecursive' . head $ runRenamerWithoutErr renameDecls [fndecl]
     where isRecursive' (FnDecl (Fn (Just name) prms body scope)) =
             name `elem` [name | (RefExpr (Ref name)) <- universe body]
           isRecursive' _ = False

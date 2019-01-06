@@ -1,11 +1,18 @@
 module Renamer
     ( RenamerM(..)
+    , RenamerS(..)
+    , GenEnv(..)
+    , GenName(..)
     , renameModule
     , renameExpr
     , renameDecls
     -- utility
+    , initRenamerS
     , emptyGenEnv
+    , evalRenamer'
     , runRenamer
+    , runRenamer'
+    , runRenamerWithoutErr
     ) where
 
 import TechnePrelude
@@ -32,6 +39,7 @@ type RenamerM a  = ExceptT RenamerE (State RenamerS) a
 
 -- FIXME: currEnv is stupid. Explicitly return a generated env.
 -- FIXME: name clashes between modules are not reported.
+-- FIXME: probably need to return GenEnv to REPL
 
 -- NamedTElems are not renamed because there is no way to know which data type
 -- they belong to (or even we can't know if they belong to a data type or not).
@@ -47,6 +55,7 @@ type RenamerM a  = ExceptT RenamerE (State RenamerS) a
 renameModule :: Module -> GenEnv -> RenamerM Module
 renameModule (Module impts decls) env = Module impts <$> renameDecls decls env
 
+-- FIXME: main function (rename it to PROGRAM_ENTRY or smth like that)
 renameDecls :: [Decl] -> GenEnv -> RenamerM [Decl]
 renameDecls decls env = do
     gdecls <- resetCurrEnv >> mapM (`renameDeclNames` env) decls
@@ -62,6 +71,9 @@ renameDecls decls env = do
               renameDecl (FnDecl fn@Fn{}) env = do
                 b <- renameExpr (FnExpr fn) env
                 return $ FnDecl (fnExprFn b)
+
+              -- FIXME: rename ImplDecl, ConceptDecl
+              renameDecl x env = return x
 
 
 -- ----------------------------------------------------------------------------
@@ -108,15 +120,15 @@ renameExpr (WhenExpr cases) env = do
             return (e1, e2)
 
 renameExpr (BinExpr op right left) env = liftM3 BinExpr
-                                                (renameOp op env)
+                                                (renameFreeVar op env)
                                                 (renameExpr right env)
                                                 (renameExpr left env)
 
 renameExpr (UnExpr op operand) env = liftM2 UnExpr
-                                            (renameOp op env)
+                                            (renameFreeVar op env)
                                             (renameExpr operand env)
 
-renameExpr (FixExpr expr) env = renameExpr expr env
+renameExpr (FixExpr expr) env = FixExpr <$> renameExpr expr env
 
 renameExpr x _ = return x
 
@@ -126,22 +138,27 @@ renameExpr x _ = return x
 
 renameFreeVar :: Name -> GenEnv -> RenamerM GenName
 renameFreeVar name env =
-    case Map.lookup name env of
-      Just gname -> return gname
-      Nothing    -> do
-          fail <- gets allowFail
-          if fail
-             then throwError (NotAssigned name)
-             else genName
-
-renameOp :: Op -> GenEnv -> RenamerM Op
-renameOp (BinOp name) env = BinOp <$> renameFreeVar name env
-renameOp (UnOp  name) env = UnOp <$> renameFreeVar name env
+    if  tisUpperFirst name || tisPrefixOf "internal" name
+       then return name
+       else case Map.lookup name env of
+              Just gname -> return gname
+              Nothing    -> do
+                  fail <- gets allowFail
+                  if fail
+                     then throwError (NotAssigned name)
+                     else genName
 
 renamePattern :: Pattern -> RenamerM Pattern
 renamePattern (BindPattern name typ) = flip BindPattern typ <$> insertCurrEnv name
-renamePattern (UnpackPattern name dataname tuple) =
-    UnpackPattern name dataname <$> renameTuple renamePattern tuple
+renamePattern (ListPattern name list) = do
+    gname <- insertCurrEnv' name
+    ListPattern gname <$> renameList renamePattern list
+renamePattern (TuplePattern name tuple) = do
+    gname <- insertCurrEnv' name
+    TuplePattern gname <$> renameTuple renamePattern tuple
+renamePattern (UnpackPattern name dataname tuple) = do
+    gname <- insertCurrEnv' name
+    UnpackPattern gname dataname <$> renameTuple renamePattern tuple
 renamePattern ptrn =
     case ptrnName ptrn of
       Just name -> insertCurrEnv name >>= \genname -> return $ ptrn { ptrnName = Just genname }
@@ -160,8 +177,19 @@ renameList f (List xs) = List <$> mapM f xs
 -- RenamerM utility
 -- ----------------------------------------------------------------------------
 
+-- FIXME: change evalRenamer to runRenamer and runRenamer to evalRenamer xdxd
+evalRenamer' :: (a -> GenEnv -> RenamerM a) -> a -> GenEnv -> RenamerS -> (Either RenamerE a, RenamerS)
+evalRenamer' m a env s = runState (runExceptT $ m a env) s
+
 runRenamer :: Bool -> RenamerM a -> Either RenamerE a
 runRenamer fail m = evalState (runExceptT m) $ initRenamerS fail
+
+runRenamer' :: (a -> GenEnv -> RenamerM a) -> a -> Either RenamerE a
+runRenamer' m a = evalState (runExceptT $ m a emptyGenEnv) $ initRenamerS True
+
+runRenamerWithoutErr :: (a -> GenEnv -> RenamerM a) -> a -> a
+runRenamerWithoutErr m a = fromRight' $
+    evalState (runExceptT $ m a emptyGenEnv) $ initRenamerS False
 
 initRenamerS :: Bool -> RenamerS
 initRenamerS fail = RenamerS { counter = 0, currEnv = Map.empty, allowFail = fail }
@@ -178,6 +206,11 @@ insertCurrEnv name = do
     s <- get
     put s { currEnv = Map.insert name genname (currEnv s) }
     return genname
+
+insertCurrEnv' :: Maybe Name -> RenamerM (Maybe Name)
+insertCurrEnv' name = case name of
+                        Just x  -> Just <$> insertCurrEnv x
+                        Nothing -> return Nothing
 
 resetCurrEnv :: RenamerM ()
 resetCurrEnv = do

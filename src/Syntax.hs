@@ -8,6 +8,10 @@ import TechnePrelude
 import Data.Data hiding (Fixity)
 import qualified Data.Map as Map
 
+-- FIXME: seperate PlaceHolder and Ref
+-- FIXME: Create a seperate Lambda type
+-- FIXME: when seems stupid
+
 infixr `TAp`
 infixr :-*>
 infixr :->>
@@ -17,7 +21,6 @@ type Name        = Text
 type Path        = Text
 type ConceptName = Text
 type DataName    = Text
-type FnSignature = [Type]
 
 data Repl
     = ReplExpr   Expr
@@ -44,10 +47,10 @@ data Expr
     | TupleExpr  (Tuple Expr)
     | FnExpr     { fnExprFn :: Fn }
     | RefExpr    Ref
-    | UnExpr      { unExprOp      :: Op
+    | UnExpr      { unExprOp      :: Name
                   , unExprOperand :: Expr
                   }
-    | BinExpr     { binExprOp     :: Op
+    | BinExpr     { binExprOp     :: Name
                   , binExprLeft   :: Expr
                   , binExprRight  :: Expr
                   }
@@ -89,9 +92,9 @@ data Ref
     deriving (Show, Eq, Ord, Data, Typeable)
 
 data Pattern
-    = BindPattern   Name (Maybe Type)                 -- a
-    | ElsePattern   { ptrnName     :: Maybe Name }    -- else ->
-    | RestPattern   { ptrnName     :: Maybe Name }    -- ...
+    = BindPattern   Name (Maybe Scheme)
+    | ElsePattern   { ptrnName     :: Maybe Name }
+    | RestPattern   { ptrnName     :: Maybe Name }
     | LitPattern    { ptrnName     :: Maybe Name
                     , ptrnLit      :: Lit
                     }
@@ -137,7 +140,7 @@ data Dat = Dat  { datName         :: Name
 
 data FnDef
     = FnDef { fnDefName :: Name
-            , fnDefSignature :: FnSignature
+            , fnDefSignature :: Scheme
             } deriving (Show, Eq, Data, Typeable)
 
 -- | Top-level declarations
@@ -180,11 +183,6 @@ newtype List a
     = List [a]
     deriving (Show, Eq, Functor, Semigroup, Monoid, Data, Typeable)
 
-data Op
-    = BinOp { opName :: Name }
-    | UnOp  { opName :: Name }
-    deriving (Show, Eq, Data, Typeable)
-
 data Fn
     = Fn { fnName       :: Maybe Name
          , fnParams     :: [Param]
@@ -219,11 +217,23 @@ lookupConstraints typ =
 prependTuple tuple elem = Tuple (elem : tupleElems tuple)
 prependFnAppl fnAppl expr = fnAppl { fnApplTuple = fnApplTuple fnAppl `prependTuple` expr }
 
+declName (FnDecl (Fn (Just name) _ _ _)) = name
+declName (DataDecl (Dat name _ _)) = name
+declName _ = undefined
+
+-- FIXME: this should obey the order of the data type (if given)
+-- Maybe this should be resolved earlier, like in the renamer or in a seperate
+-- desugar phase
+fixTupleOrder :: [TupleElem a] -> [a]
+fixTupleOrder = map extract
+    where extract (IndexedTElem x) = x
+          extract (NamedTElem _ x) = x
+
 -- ----------------------------------------------------------------------------
 -- mk/mks (s for simple) (These are generally for expressions)
 -- ----------------------------------------------------------------------------
 
-mksParam :: Text -> Maybe Type -> Param
+mksParam :: Text -> Maybe Scheme -> Param
 mksParam name typ = Param (BindPattern name typ)
 
 mksRef :: Text -> Expr
@@ -240,7 +250,7 @@ mkTuple :: [a] -> Tuple a
 mkTuple xs = Tuple $ map IndexedTElem xs
 
 mkEqCheck :: Expr -> Expr -> Expr
-mkEqCheck = BinExpr (BinOp "==")
+mkEqCheck = BinExpr "=="
 
 mkBool :: Bool -> Expr
 mkBool True  = mksRef "True"
@@ -252,8 +262,6 @@ mkBool False = mksRef "False"
 
 pattern FieldAccessor = "::"
 
-pattern EUnary  name expr         = UnExpr    (UnOp    name) expr
-pattern EBinary name exprl exprr  = BinExpr   (BinOp   name) exprl exprr
 pattern EList   x                 = ListExpr  (List       x)
 pattern ETuple  x                 = TupleExpr (Tuple      x)
 pattern EChr    x                 = LitExpr   (ChrLit     x)

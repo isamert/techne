@@ -73,13 +73,6 @@ updateFnDefs def = do
     put $ state { stateFnDefs = def : stateFnDefs state }
     return def
 
--- TODO: delete?
-getFnSignature :: Name -> ParserM (Maybe FnSignature)
-getFnSignature fnname = do
-    state <- get
-    return $ fmap fnDefSignature . headSafe . filter
-      (\(FnDef name sig) -> name == fnname) $ stateFnDefs state
-
 -- ----------------------------------------------------------------------------
 -- Helper functions for parsing in general
 -- ----------------------------------------------------------------------------
@@ -168,7 +161,7 @@ rwords = ["if", "then", "else", "elif", "skip", "return", "and", "is",
            "let", "or", "while", "when", "use", "from", "data", "fn"]
 
 rsymbols :: [Text]
-rsymbols = ["->", FieldAccessor]
+rsymbols = ["->", "=", FieldAccessor]
 
 infixChars :: String
 infixChars = "-=_?+*/&^%$!@<>:|"
@@ -209,8 +202,10 @@ infixIdent = lexeme . try $ do
 callOpIdent :: ParserM Text
 callOpIdent = lexeme . try $ do
     c <- some $ oneOf $ '.':infixChars
-    return $ tpack c
-
+    check $ tpack c
+    where check w
+           | w `elem` rsymbols = fail $ show w ++ " is a predefined operator"
+           | otherwise = return w
 
 -- | A generic parameter identifier like ~a.
 genericIdent :: ParserM Text
@@ -249,10 +244,10 @@ buildOpTree =
      <$> gets stateFixity
 
 infixTerm :: Text -> ParserM (Expr -> Expr -> Expr)
-infixTerm name = try $ EBinary <$> symbol name
+infixTerm name = try $ BinExpr <$> symbol name
 
 unaryTerm :: Text -> ParserM (Expr -> Expr)
-unaryTerm name = try $ EUnary <$> symbol name
+unaryTerm name = try $ UnExpr <$> symbol name
 
 toOperator (InfixL  _ name) = E.InfixL  $ infixTerm name
 toOperator (InfixR  _ name) = E.InfixR  $ infixTerm name
@@ -282,7 +277,6 @@ import_ = do
     path <- identifier `sepBy1` dot
     rword "use"
     endpoint <- identifier `sepBy` dot
-    semicolon
     return $ Import path endpoint
 
 decl :: ParserM Decl
@@ -295,11 +289,14 @@ decl = FnDecl <$> fnTop
 -- Helpers
 -- ----------------------------------------------------------------------------
 
-typeWithConstraints :: [Constraint] -> ParserM Type
-typeWithConstraints cnsts = genericType
+typeWithConstraints :: [Constraint] -> ParserM Scheme
+typeWithConstraints cnsts = close <$> typeWithConstraints' cnsts
+
+typeWithConstraints' :: [Constraint] -> ParserM Type
+typeWithConstraints' cnsts = genericType
                               <|> esotericType
                               <|> liftM2 (mkType cnsts) identifier typeParams
-    where typeParams = optional . angles $ typeWithConstraints cnsts `sepBy` comma
+    where typeParams = optional . angles $ typeWithConstraints' cnsts `sepBy` comma
           appliedType cns typname typprms = applyDataType cns typname $ fromMaybe [] typprms
           mkType cnsts tname typprms  =
               case lookupConstraints tname cnsts of
@@ -311,13 +308,13 @@ typeWithConstraints cnsts = genericType
           genericType = liftM2 (appliedType TyVar) genericIdent typeParams
           esotericType = typeList <|> try typeTuple <|> typeArr
           typeTuple = do
-              tuple <- parens $ typeWithConstraints [] `sepBy1` comma
+              tuple <- parens $ typeWithConstraints' [] `sepBy1` comma
               return $ applyTuple tuple
           typeList = do
-              tvar <- brackets $ typeWithConstraints cnsts
+              tvar <- brackets $ typeWithConstraints' cnsts
               return $ pList tvar
           typeArr = do
-              typs <- parens $ typeWithConstraints cnsts `sepBy1` wArrow
+              typs <- parens $ typeWithConstraints' cnsts `sepBy1` wArrow
               return $ foldl1 (:->>) typs
 
 -- | Parse `A a`, return (a, A)
@@ -366,7 +363,7 @@ param cnsts = do
 params :: [Constraint] -> ParserM [Param]
 params cnsts = param cnsts `sepBy` comma
 
-optionalType :: [Constraint] -> ParserM (Maybe Type)
+optionalType :: [Constraint] -> ParserM (Maybe Scheme)
 optionalType cnsts = optional (colon >> typeWithConstraints cnsts)
 
 -- Parse a type parameter
@@ -508,12 +505,12 @@ when_ :: ParserM Expr
 when_ = do
     rword "when"
     predicate <- optional $ try (expr <* rword "is")
-    pairs <- liftM2 (,) (mkPred predicate) (symbol "->" >> expr) `sepBy` comma
+    pairs <- liftM2 (,) (mkPred predicate) (wArrow >> expr) `sepBy` comma
     rword "end"
     return $ WhenExpr pairs
     where mkPred pred = case pred of
                          Just x  -> fmap (mkEqCheck x) expr
-                         Nothing -> fmap (mkEqCheck $ mkBool True) expr
+                         Nothing -> expr
 
 match_ :: ParserM Expr
 match_ = do
@@ -561,7 +558,7 @@ data_ = do
               (try (parens (dataParams cnsts)) <|> return [])
           dataParam cnsts = do
               name <- identifier
-              typ  <- colon >> typeWithConstraints cnsts
+              typ  <- colon >> typeWithConstraints' cnsts
               return $ DataParam name typ
           dataParams cnsts = dataParam cnsts `sepBy1` comma
           prependBase dat base = map (fmap (base ++)) dat
@@ -587,21 +584,23 @@ impl = do
     fns <- many (rword "impls" >> fnTop) -- FIXME: better keyword pls
     return $ Impl cname dname fns
 
+-- FIXME: parse call operators
 fnTop :: ParserM Fn
 fnTop = do
     rword "let" <|> return ()
     fn <- try fnInfix <|> fn
-    equal
     liftM2 fn expr where_
     where where_ = (rword "where" >> decl `sepBy` comma) <|> return []
           fnInfix = do -- TODO: check definition?
             prm1 <- param []
             name <- callOpIdent
             prm2 <- param []
+            equal
             return $ Fn (Just name) [prm1, prm2]
           fn = do
             name <- identifier
             params <- params []
+            equal
             return $ Fn (Just name) params
 
 fnDefWithConstraints :: [Constraint] -> ParserM FnDef
@@ -609,8 +608,7 @@ fnDefWithConstraints constraints = do
     fnname <- try $ identifier <* (colon >> notFollowedBy (oneOf infixChars))
     lclCnsts <- constraintsWithArrow
     let cnsts = constraints ++ lclCnsts
-    types <- typeWithConstraints cnsts `sepBy1` wArrow
-    eol <|> semicolon
+    types <- typeWithConstraints cnsts
     let fndef = FnDef fnname types
     return fndef
 

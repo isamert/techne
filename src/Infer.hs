@@ -1,4 +1,3 @@
-{-# LANGUAGE RankNTypes, PatternSynonyms, ViewPatterns #-}
 module Infer
     ( -- Functions
       inferExpr
@@ -12,6 +11,7 @@ module Infer
     , InferE(..)
     -- Utils
     , generalize
+    , close
     , pList
     , applyTuple
     , applyDataType
@@ -92,23 +92,25 @@ instance Typed Lit where
 initTypeEnv :: TypeEnv
 initTypeEnv = TypeEnv $ Map.fromList
     [ -- int functions:
-      ("+", S $ TInt :->> TInt :->> TInt  )
-    , ("-", S $ TInt :->> TInt :->> TInt  )
-    , ("*", S $ TInt :->> TInt :->> TInt  )
-    , ("/", S $ TInt :->> TInt :->> TFloat)
+      ("internalSum",  S $ TInt :->> TInt :->> TInt  )
+    , ("internalSub", S $ TInt :->> TInt :->> TInt  )
+    , ("internalMul",   S $ TInt :->> TInt :->> TInt  )
+    , ("internalDiv",   S $ TInt :->> TInt :->> TFloat)
 
+    {- FIXME:
     -- float functions
     , ("+.", S $ TFloat :->> TFloat :->> TFloat)
     , ("-.", S $ TFloat :->> TFloat :->> TFloat)
     , ("*.", S $ TFloat :->> TFloat :->> TFloat)
     , ("/.", S $ TFloat :->> TFloat :->> TFloat)
+    -}
 
     -- number utility
     , ("float2int", S $ TFloat :->> TInt  )
     , ("int2float", S $ TInt   :->> TFloat)
 
      -- list functions
-    , ("++" , oneVarScheme $ pList TVarA :->> pList TVarA :->> pList TVarA)
+    , ("internalArrJoin" , oneVarScheme $ pList TVarA :->> pList TVarA :->> pList TVarA)
 
     -- generic functions
     , ("==", oneVarScheme $ TVarA :->> TVarA :->> TBool)]
@@ -215,13 +217,6 @@ filterNamed (Nothing, _) = False
 --
 -- Tuple stuff
 --
--- FIXME: this should obey the order of the data type (if given)
--- Maybe this should be resolved earlier, like in the renamer or in a seperate
--- desugar phase
-fixTupleOrder :: [TupleElem a] -> [a]
-fixTupleOrder = map extract
-    where extract (IndexedTElem x) = x
-          extract (NamedTElem _ x) = x
 
 applyTuple xs = flip (applyDataType TyCon) xs $
     case length xs of
@@ -308,11 +303,11 @@ infer env (ERef name) =  lookupEnv env name
 
 infer env (LitExpr lit) = return (emptySubst, typeOf lit)
 
-infer env (EBinary opname e1 e2)  = do
+infer env (BinExpr opname e1 e2)  = do
     (_, typ) <- lookupEnv env opname
     inferPrim env [e1, e2] typ
 
-infer env (EUnary opname e1) = do
+infer env (UnExpr opname e1) = do
     (_, typ) <- lookupEnv env opname
     inferPrim env [e1] typ
 
@@ -382,7 +377,10 @@ infer env (EFn name prms body scope) = do
 
 -- FIXME: (fn [[1], [a]] -> a) => can't infer a
 inferPattern :: TypeEnv -> Pattern -> InferM ((Maybe Name, Type), [(Maybe Name, Type)])
-inferPattern _ (BindPattern name typ) = -- FIXME: check user type exists and use it instead of tv
+inferPattern _ (BindPattern name (Just scheme)) = do
+    t <- instantiate scheme
+    return ((Just name, t), []) -- FIXME: check if type exists and properly applied
+inferPattern _ (BindPattern name typ) =
   fresh Star >>= \tvar -> return ((Just name, tvar), [])
 
 inferPattern _ (ElsePattern name) =
@@ -470,13 +468,16 @@ inferDecl _ decl = Left $ NotAnExpression decl
 inferDataCons :: TypeEnv -> Name -> [Constraint] -> (Name, [DataParam]) -> InferM [(Name, Scheme)]
 inferDataCons env typname typvars (consname, consparams) = do
     ctyp <- constyp
-    return $ (typname, close returnType):(consname, close ctyp):map mkFieldAccessorFn consparams
-        where param2type (DataParam _ typ) = return typ
+    accessors <- mapM mkFieldAccessorFn consparams
+    return $ (typname, close returnType):(consname, close ctyp):accessors
+        where --FIXME: check if type exists and properly applied
+              param2type (DataParam _ typ) = return typ
               nameOfConstraint (TypeConstraint name) = name
               constyp = foldrM (\param typ -> do
                                                 prmtyp <- param2type param
                                                 return $ prmtyp :->> typ) returnType consparams
 
               returnType = applyDataType TyCon typname (map (Tv . nameOfConstraint) typvars)
-              mkFieldAccessorFn (DataParam fieldname fieldtyp) =
-                (typname ++ FieldAccessor ++ fieldname, close $ returnType :->> fieldtyp)
+              mkFieldAccessorFn (DataParam fieldname fieldtyp) = do
+                  return (typname ++ FieldAccessor ++ fieldname,
+                          close $ returnType :->> fieldtyp)
