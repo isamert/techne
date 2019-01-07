@@ -6,7 +6,6 @@ module Parser
     -- Types
     , ParserS (..)
     , ParserM (..)
-    , ParserE (..)
     -- State related
     , initParserS
     -- Lexers
@@ -25,6 +24,7 @@ module Parser
     ) where
 
 import TechnePrelude
+import Err
 import Syntax
 import Infer
 
@@ -47,7 +47,6 @@ data ParserS =
             } deriving (Show,  Eq)
 
 type ParserM a  = StateT ParserS (Parsec Void Text) a
-type ParserE    = ParseErrorBundle Text Void
 
 -- ----------------------------------------------------------------------------
 -- State related functions
@@ -82,8 +81,18 @@ tparse p = parse (runStateT p initParserS)
 
 parseModule = runStateT module_ initParserS
 parseFile p file = runParser p file <$> readFile file
-parseReplWithState state = parse (runStateT repl state) "<stdin>"
-parseExprWithState state = parse (runStateT expr state) "<stdin>"
+
+parseReplWithState :: ParserS -> Text -> TechneResult (Repl, ParserS)
+parseReplWithState state line =
+    case parse (runStateT repl state) "<stdin>" line of
+      Right x -> Right x
+      Left y -> Left $ ParserErr y
+
+parseExprWithState :: ParserS -> Text -> TechneResult (Expr, ParserS)
+parseExprWithState state line =
+    case parse (runStateT expr state) "<stdin>" line of
+      Right x -> Right x
+      Left y -> Left $ ParserErr y
 
 repl :: ParserM Repl
 repl = (ReplFixity <$> fixity)

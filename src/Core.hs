@@ -2,16 +2,21 @@
 module Core where
 
 import TechnePrelude
+import Err
 import Syntax
 import Parser
 
 import qualified Data.Map as Map
 import Data.Generics.Uniplate.Data
 import Data.Data (Data)
+import Control.Monad.Identity
+import Control.Monad.Except
 
 -- ----------------------------------------------------------------------------
 -- Core definitions
 -- ----------------------------------------------------------------------------
+
+type CoreM a = TechneM Identity a
 
 data CVal
     = CDat Name [CExpr]
@@ -43,56 +48,80 @@ pattern CaseFalse = UnpackPattern Nothing "False" (Tuple [])
 -- ----------------------------------------------------------------------------
 
 -- FIXME: compile patterns
-coreExpr :: Expr -> CExpr
-coreExpr (LitExpr lit) = CVal (CLit lit)
-coreExpr (FnApplExpr expr (Tuple xs)) = foldl CApp (coreExpr expr) (tuple2ctuple xs)
-coreExpr (BinExpr op l r) = foldl CApp (CRef op) (map coreExpr [l,r])
-coreExpr (UnExpr op expr) = CApp (CRef op) (coreExpr expr)
-coreExpr (RefExpr (Ref name)) = CRef name
-coreExpr (RefExpr (PlaceHolder _)) = desugarErr
-coreExpr (EFn name prms body _) = foldr CLam (coreExpr body) (map param2name prms)
+coreExpr :: Expr -> CoreM CExpr
+coreExpr (LitExpr lit) = return $ CVal (CLit lit)
+coreExpr (FnApplExpr expr (Tuple xs)) = do
+    e <- coreExpr expr
+    ctup <- tuple2ctuple xs
+    return $ foldl CApp e ctup
+coreExpr (BinExpr op l r) = do
+    exprs <- mapM coreExpr [l,r]
+    return $ foldl CApp (CRef op) exprs
+coreExpr (UnExpr op expr) = CApp (CRef op) <$> coreExpr expr
+coreExpr (RefExpr (Ref name)) = return $ CRef name
+coreExpr (RefExpr (PlaceHolder _)) = throwError $ CoreErr DesugaringError
+coreExpr (EFn name prms body _) = do
+    e <- coreExpr body
+    cprms <- mapM param2name prms
+    return $ foldr CLam e cprms
 coreExpr (WhenExpr cases) = cases2match cases
-coreExpr (MatchExpr expr cases) = CMatch (coreExpr expr) (map (map coreExpr) cases)
-coreExpr (FixExpr xs) = CFix (coreExpr xs)
+coreExpr (MatchExpr expr cases) = do
+    e <- coreExpr expr
+    cs <- mapM (mapM coreExpr) cases
+    return $ CMatch e cs
+coreExpr (FixExpr xs) = CFix <$> coreExpr xs
 coreExpr (EList xs) = list2clist xs
-coreExpr (ETuple xs) = foldl CApp (CRef tupleConstructor) (tuple2ctuple xs)
+coreExpr (ETuple xs) = do
+    ctuple <- tuple2ctuple xs
+    return $ foldl CApp (CRef tupleConstructor) ctuple
     where tupleConstructor = "Tuple" ++ (tshow . length $ fixTupleOrder xs)
 
 -- FIXME: ImplDecl's
 -- FIXME: imports
-coreModule :: Module -> Env
-coreModule (Module imports decls) = foldl Map.union Map.empty $ map coreDecl decls
+coreModule :: Module -> CoreM Env
+coreModule (Module imports decls) = do
+    cdecls <- mapM coreDecl decls
+    return $ foldl Map.union Map.empty cdecls
 
-coreDecl :: Decl -> Env
-coreDecl (FnDecl fn@(Fn (Just name) prms body scope)) =
-    Map.union (Map.singleton name (coreExpr $ FnExpr fn))
-              (foldl Map.union Map.empty $ map coreDecl scope)
-coreDecl (DataDecl (Dat _ _ constrs)) = Map.fromList $ map constr2fn constrs
+coreDecl :: Decl -> CoreM Env
+coreDecl (FnDecl fn@(Fn (Just name) prms body scope)) = do
+    cfn <- coreExpr $ FnExpr fn
+    cscp <- mapM coreDecl scope
+    return $ Map.union (Map.singleton name cfn)
+              (foldl Map.union Map.empty cscp)
+coreDecl (DataDecl (Dat _ _ constrs)) = return $ Map.fromList $ map constr2fn constrs
 
 -- ----------------------------------------------------------------------------
 -- Helpers
 -- ----------------------------------------------------------------------------
 
-desugarErr :: a
-desugarErr = error "Something went wrong in desugaring phase."
+tuple2ctuple :: [TupleElem Expr] -> CoreM [CExpr]
+tuple2ctuple xs = mapM coreExpr $ fixTupleOrder xs
 
-tuple2ctuple :: [TupleElem Expr] -> [CExpr]
-tuple2ctuple xs = map coreExpr $ fixTupleOrder xs
+param2name :: Param -> CoreM Name
+param2name (Param (BindPattern name _)) = return name
+param2name (Param ptrn) = throwError $ CoreErr DesugaringError
 
-param2name :: Param -> Name
-param2name (Param (BindPattern name _)) = name
-param2name (Param ptrn) = desugarErr
+cases2match :: [(Expr, Expr)] -> CoreM CExpr
+cases2match [] = return $ CApp (CRef "error") $ CVal . CLit $ StrLit "unhandled case in when expr"
+cases2match ((el, er):cs) = do
+    cel <- coreExpr el
+    cer <- coreExpr er
+    ccs <- cases2match cs
+    return $ CMatch cel [(CaseTrue,  cer)
+                        ,(CaseFalse, ccs)]
 
-cases2match :: [(Expr, Expr)] -> CExpr
-cases2match [] = CApp (CRef "error") $ CVal . CLit $ StrLit "unhandled case in when expr"
-cases2match ((el, er):cs) = CMatch (coreExpr el) [(CaseTrue,  coreExpr er)
-                                                 ,(CaseFalse, cases2match cs)]
-
-list2clist :: [Expr] -> CExpr
-list2clist [] = CRef "Nil"
-list2clist (x:xs) = foldl CApp (CRef "Cons") [coreExpr x, list2clist xs]
+list2clist :: [Expr] -> CoreM CExpr
+list2clist [] = return $ CRef "Nil"
+list2clist (x:xs) = do
+    cx <- coreExpr x
+    cxs <- list2clist xs
+    return $ foldl CApp (CRef "Cons") [cx, cxs]
 
 constr2fn :: (Name, [DataParam]) -> (Name, CExpr)
 constr2fn (name, xs) = (name, foldr CLam (CVal (CDat name refs)) params)
     where params = zipWith (\_ n -> "prm" ++ tshow n ++ name) xs [1..]
           refs   = map CRef params
+
+runCore :: CoreM a -> TechneResult a
+runCore m = runIdentity (runExceptT $ m)

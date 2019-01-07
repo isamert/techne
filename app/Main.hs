@@ -2,6 +2,7 @@
 module Main where
 
 import TechnePrelude
+import Err
 import Syntax
 import Desugar
 import Parser
@@ -12,7 +13,7 @@ import Renamer
 import Eval
 
 
-import Text.Megaparsec
+import Text.Megaparsec hiding (setParserState)
 import Text.Megaparsec.Char
 import Text.Megaparsec.Error
 import qualified Text.Megaparsec.Char.Lexer as L
@@ -45,6 +46,7 @@ data ReplS = ReplS { parserState  :: ParserS
                    } deriving (Show, Eq)
 
 type ReplM = InputT (StateT ReplS IO)
+type ReplM2 = InputT (StateT ReplS (ExceptT (TechneErr, ReplS) IO))
 
 -- ----------------------------------------------------------------------------
 -- Main
@@ -94,15 +96,20 @@ runOptions (Options _ output (Just input)) = runInputT defaultSettings $ do
       Right a -> tgroom a
       Left a -> tpack $ errorBundlePretty a
 
-runOptions (Options True _ _) = runRepl
+runOptions (Options True _ _) = runRepl initReplS
 runOptions (Options i outf inf) = putStrLn $ tgroom i <> tgroom outf <> tgroom inf
 
 -- ----------------------------------------------------------------------------
 -- REPL
 -- ----------------------------------------------------------------------------
 
-runRepl :: IO ()
-runRepl = evalStateT (runInputT replSettings repl) initReplS
+runRepl :: ReplS -> IO ()
+runRepl s = do
+    result <- runExceptT (evalStateT (runInputT replSettings repl) s)
+    case result of
+      Right x -> return ()
+      Left (_, s) -> runRepl s
+
 
 initReplS :: ReplS
 initReplS = ReplS { parserState  = initParserS
@@ -134,7 +141,7 @@ replComplete left_ word = do
     where searchCmds word = map simpleCompletion
                               $ filter (word `isPrefixOf`) (map ((":" ++) . tunpack . head . fst) cmds)
 
-repl :: ReplM ()
+repl :: ReplM2 ()
 repl = do
     linestr <- getInputLine "> "
     case sstrip <$> linestr of
@@ -160,171 +167,166 @@ outputTextLn str = outputStrLn (tunpack str)
 -- REPL commands
 -- ----------------------------------------------------------------------------
 
-cmds :: [([Text], Text -> ReplM ())]
-cmds = [ (["quit", "q"]          , \_ -> return () ) -- FIXME: system.exit
-       , (["type", "t"]          , cmdType False)
-       , (["dump-type"]          , cmdType True)
-       , (["dump-state", "ds" ]  , cmdDumpState)
-       , (["dump-ast-vanilla"]   , cmdDumpAst selVanilla)
-       , (["dump-ast-desugared"] , cmdDumpAst selDesugared)
-       , (["dump-ast-renamed"]   , cmdDumpAst selRenamed)
-       , (["dump-ast-core"]      , cmdDumpAst selCore)
-       , (["dump-file-ast"]      , cmdDumpAstFile)
-       , (["load-file", "lf" ]   , cmdLoadFile)
-       , (["eval"]               , cmdDefault)
+cmds :: [([Text], Text -> ReplM2 ())]
+cmds = [ (["eval"], cmdEval)
+       , (["dumpVanilla"], cmdDumpVanilla)
+       , (["dumpDesugared"], cmdDumpDesugared)
+       , (["dumpRenamed"], cmdDumpDesugared)
+       , (["dumpType"], cmdType True)
+       , (["type", "t"], cmdType False)
        ]
 
-cmdDumpState :: Text -> ReplM ()
-cmdDumpState _ = groom <$> lift get >>= outputStrLn >> repl
-
-cmdLoadFile line = do
-    let files = swords $ tunpack line
-    modules <- mapM (parseFile parseModule) files
-    forM_ modules (\case
-          Right (x, pstate) ->
-              case runRenamer' renameModule (desugarModule x) of
-                Right mod ->
-                    let coreAst = coreModule mod in
-                    outputStrLn $ groom coreAst
-                Left y -> outputStrLn $ show y
-          Left y            -> printErrBundle y)
-{-
-cmdDefault line = do
+cmdDumpVanilla :: Text -> ReplM2 ()
+cmdDumpVanilla line = do
     pstate <- lift $ gets parserState
-    case parseReplWithState pstate line of
-      Right (x, pstate) -> case x of
-        ReplExpr expr -> printAndUpdateState (desugarExpr expr) pstate
-        ReplDecl decl -> do
-            outputStrLn $ groom (desugarDecl decl)
-            inferRepl inferDecl (desugarDecl decl)
-        x -> printAndUpdateState x pstate
-      Left y -> printErrBundle y
--}
+    (result, pstate') <- liftE $ parseReplWithState pstate line
+    outputStrLn . groom $ result
 
-cmdDefault :: Text -> ReplM ()
-cmdDefault line = pdr line dumpExpr dumpDecl
-    where dumpDecl tuple = do
-            env <- lift $ gets env
-            extendEnv (selCore tuple)
-
-          dumpExpr tuple = do
-            env <- lift $ gets env
-            outputStrLn . groom $ eval env (selCore tuple)
+cmdDumpDesugared :: Text -> ReplM2 ()
+cmdDumpDesugared line = do
+    (result, pstate') <- replParse line
+    case result of
+      ReplExpr expr -> groomPut $ desugarExpr expr
+      ReplDecl decl -> groomPut $ desugarDecl decl
 
 
-cmdDumpAstFile = cmdLoadFile
-
---cmdDumpAst :: a -> Text -> ReplM ()
-cmdDumpAst sel line = pdr line dumpExpr dumpDecl
-    where dumpExpr tuple = outputStrLn (groom $ sel tuple)
-          dumpDecl = undefined
-
-cmdType :: Bool -> Text -> ReplM ()
+cmdType :: Bool -> Text -> ReplM2 ()
 cmdType dump line = do
-    pstate  <- lift $ gets parserState
+    (parsed, _) <- replParse line
+    desugared <- replDesugar parsed
+    (renamed, _, _) <- replRename desugared
+    (mscheme, _) <- replInfer desugared
+    case mscheme of
+      Just scheme -> do
+          outputText line
+          outputStr " :: "
+          outputStrLn $ if dump
+                          then show scheme
+                          else show $ pretty scheme
+      Nothing     -> return ()
+
+cmdEval :: Name -> ReplM2 ()
+cmdEval line = do
+    env <- lift $ gets env
+    (parsed, pstate') <- replParse line
+    desugared <- replDesugar parsed
+    (renamed, rstate', genenv') <- replRename desugared
+    (mscheme, typeenv') <- replInfer desugared
+    (mcexpr, env') <- replCore renamed
+    case mcexpr of
+      Just expr -> do
+          result <- liftE $ runEval env expr
+          groomPut result
+      Nothing   -> return ()
+
+    setParserState pstate'
+    setRenamerState rstate'
+    setGenEnv genenv'
+    setTypeEnv typeenv'
+    setEnv env'
+
+replParse :: Text -> ReplM2 (Repl, ParserS)
+replParse line = do
+    pstate <- lift $ gets parserState
+    (parsed, pstate') <- liftE $ parseReplWithState pstate line
+    return $ case parsed of
+      (ReplExpr _) -> (parsed, pstate')
+      (ReplDecl _) -> (parsed, pstate')
+      _            -> (ReplExpr $ LitExpr $ StrLit "", pstate')
+
+replDesugar :: Repl -> ReplM2 Repl
+replDesugar r = return $
+    case r of
+      ReplExpr ast -> ReplExpr $ desugarExpr ast
+      ReplDecl ast -> ReplDecl $ desugarDecl ast
+
+replInfer :: Repl -> ReplM2 (Maybe Scheme, TypeEnv)
+replInfer r = do
     typeenv <- lift $ gets typeEnv
-    case parseExprWithState pstate line of
-      Right (expr, pstate) -> if dump
-                                 then (outputTextLn . tshow ) (inferExpr typeenv $ desugarExpr expr)
-                                 else (outputTextLn . tshow . fmap pretty) (inferExpr typeenv $ desugarExpr expr)
-      Left y               -> printErrBundle y
+    case r of
+      ReplExpr ast -> do
+          scheme <- liftE $ inferExpr typeenv ast
+          return (Just scheme, typeenv)
+      ReplDecl ast -> do
+          typeenv' <- liftE $ inferDecl typeenv ast
+          return (Nothing, typeenv')
+
+replRename :: Repl -> ReplM2 (Repl, RenamerS, GenEnv)
+replRename r = do
+    renamers <- lift $ gets renamerState
+    genenv <- lift $ gets genEnv
+    case r of
+      ReplExpr ast -> do
+          let desugaredExprAst = desugarExpr ast
+              (r, rstate') = evalRenamer' renameExpr desugaredExprAst genenv renamers
+          renamedast <- liftE r
+          return $ (ReplExpr renamedast, rstate', genenv)
+      ReplDecl ast -> do
+          let desugaredDeclAst = desugarDecl ast
+              (r, rstate') = evalRenamer' renameDecls [desugaredDeclAst] genenv renamers
+          [renamedast] <- liftE r
+          return $ (ReplDecl renamedast
+                   , rstate'
+                   , Map.insert (declName ast) (declName renamedast) genenv)
+
+replCore :: Repl -> ReplM2 (Maybe CExpr, Env)
+replCore r = do
+    env <- lift $ gets env
+    case r of
+      ReplExpr ast -> do
+          coreast <- liftE $ runCore $ coreExpr ast
+          return (Just coreast, env)
+      ReplDecl ast -> do
+          env' <- liftE $ runCore $ coreDecl ast
+          return (Nothing, Map.union env' env)
+
+groomPut :: (MonadIO m, Show a) => a -> InputT m ()
+groomPut = outputStrLn . groom
 
 -- ----------------------------------------------------------------------------
 -- REPL cmd helpers
 -- ----------------------------------------------------------------------------
 
-printErrBundle :: ParserE -> ReplM ()
-printErrBundle err = outputStrLn (errorBundlePretty err)
+setParserState :: ParserS -> ReplM2 ()
+setParserState pstate = lift (modify (\s -> s { parserState = pstate }))
 
-printAndUpdateState :: Show a => a -> ParserS -> ReplM ()
-printAndUpdateState x pstate = outputStrLn (groom x) >> Main.updateParserState pstate
+setRenamerState :: RenamerS -> ReplM2 ()
+setRenamerState rstate = lift (modify (\s -> s { renamerState = rstate }))
 
-updateParserState :: ParserS -> ReplM ()
-updateParserState pstate = lift (modify (\s -> s { parserState = pstate }))
+setGenEnv :: GenEnv -> ReplM2 ()
+setGenEnv genenv = lift (modify (\s -> s { genEnv = genenv }))
 
-updateRenamerState :: RenamerS -> ReplM ()
-updateRenamerState rstate = lift (modify (\s -> s { renamerState = rstate }))
-
-updateGenEnv :: GenEnv -> ReplM ()
-updateGenEnv genenv = lift (modify (\s -> s { genEnv = genenv }))
-
-insertGenEnv :: Name -> GenName -> ReplM ()
+insertGenEnv :: Name -> GenName -> ReplM2 ()
 insertGenEnv name gname = do
     genenv <- lift $ gets genEnv
-    updateGenEnv $ Map.insert name gname genenv
+    setGenEnv $ Map.insert name gname genenv
 
-updateTypeEnv :: TypeEnv -> ReplM ()
-updateTypeEnv typeenv = lift (modify (\s -> s { typeEnv = typeenv }))
+setTypeEnv :: TypeEnv -> ReplM2 ()
+setTypeEnv typeenv = lift (modify (\s -> s { typeEnv = typeenv }))
 
-updateEnv :: Env -> ReplM ()
-updateEnv env = lift (modify (\s -> s { env = env }))
+setEnv :: Env -> ReplM2 ()
+setEnv env = lift (modify (\s -> s { env = env }))
 
-insertEnv :: Name -> CExpr -> ReplM ()
+insertEnv :: Name -> CExpr -> ReplM2 ()
 insertEnv name expr = do
     env <- lift $ gets env
-    updateEnv $ Map.insert name expr env
+    setEnv $ Map.insert name expr env
 
-extendEnv :: Env -> ReplM ()
+extendEnv :: Env -> ReplM2 ()
 extendEnv nenv = do
     env <- lift $ gets env
-    updateEnv $ Map.union nenv env
+    setEnv $ Map.union nenv env
 
+liftE :: Either TechneErr a -> ReplM2 a
+liftE (Right x) = return x
+liftE (Left y) = do
+    case y of
+      ParserErr err -> outputStrLn (errorBundlePretty err)
+      x -> outputStrLn $ groom x
+    s <- lift get
+    lift $ throwError (y, s)
 
--- FIXME: I hate myself
-pdr line fnExpr fnDecl = do
-    pstate <- lift $ gets parserState
-    renamers <- lift $ gets renamerState
-    genenv <- lift $ gets genEnv
-    typeenv <- lift $ gets typeEnv
-    case parseReplWithState pstate line of
-      Right (x, pstate) ->
-          case x of
-            ReplExpr exprAst -> do
-                let desugaredExprAst = desugarExpr exprAst
-                let (renamerResult, rstate) = evalRenamer' renameExpr
-                                                           desugaredExprAst
-                                                           genenv
-                                                           renamers
-                case renamerResult of
-                  Right renamedExprAst ->
-                      case inferExpr typeenv renamedExprAst of
-                        Right scheme -> do
-                          let coreAst = coreExpr renamedExprAst
-                          fnExpr (exprAst, desugaredExprAst, renamedExprAst, coreAst)
-
-                          Main.updateParserState pstate
-                          updateRenamerState rstate
-
-                        Left err -> outputStrLn $ show err
-                  Left y -> outputStrLn $ show y
-            ReplDecl declAst ->
-                let desugaredDeclAst = desugarDecl declAst
-                    (renamerResult, rstate) = evalRenamer' renameDecls
-                                                           [desugaredDeclAst]
-                                                           genenv
-                                                           renamers in
-                case renamerResult of
-                  Right [renamedDeclAst] ->
-                      case inferDecl typeenv renamedDeclAst of
-                        Right scheme -> do
-                          let coreAst = coreDecl renamedDeclAst
-                          fnDecl (declAst, desugaredDeclAst, renamedDeclAst, coreAst)
-                          updateTypeEnv scheme
-
-                          Main.updateParserState pstate
-                          updateRenamerState rstate
-                          insertGenEnv (declName declAst) (declName renamedDeclAst)
-
-                        Left err -> outputStrLn $ show err
-                  Left y -> outputStrLn $ show y
-            x -> do
-                outputStrLn $ groom x
-                Main.updateParserState pstate
-      Left y -> printErrBundle y
-
-
-data Sel = Vanilla | Desugared | Renamed | Core deriving (Show, Eq, Ord)
-selVanilla   (a,_,_,_) = a
-selDesugared (_,a,_,_) = a
-selRenamed   (_,_,a,_) = a
-selCore      (_,_,_,a) = a
+instance MonadException m => MonadException (ExceptT e m) where
+    controlIO f = ExceptT $ controlIO $ \(RunIO run) -> let
+                    run' = RunIO (fmap ExceptT . run . runExceptT)
+                    in fmap runExceptT $ f run'

@@ -12,6 +12,8 @@ import Renamer
 import Data.Generics.Uniplate.Data
 import Data.Data (Data)
 
+-- TODO: wrap in an ExceptT Identity monad maybe
+
 desugarModule :: Module -> Module
 desugarModule (Module imports decls) = Module imports (map desugarDecl $ desugarPtrnFns decls)
 

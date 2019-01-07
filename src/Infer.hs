@@ -8,7 +8,6 @@ module Infer
     -- Data
     , TypeEnv(..)
     , Subst(..)
-    , InferE(..)
     -- Utils
     , generalize
     , close
@@ -18,6 +17,7 @@ module Infer
     ) where
 
 import TechnePrelude
+import Err
 import Syntax
 
 import Control.Monad.Except
@@ -33,20 +33,11 @@ import qualified Data.Set as Set
 -- Definitions
 -- ----------------------------------------------------------------------------
 
-pattern NotATuple = OtherError "Tuples can not have one element."
-
-data InferE
-    = UnboundVariable Text
-    | UnificationFail Type Type
-    | InfiniteType TVar Type
-    | KindMismatch TVar Type
-    | NotAnExpression Decl
-    | OtherError Text
-    deriving (Show, Eq)
+pattern NotATuple = InferenceErr (OtherError "Tuples can not have one element.")
 
 newtype TypeEnv = TypeEnv (Map.Map Name Scheme) deriving (Show, Eq, Ord)
 newtype InferS = InferS { counter :: Int }
-type InferM = ExceptT InferE (State InferS)
+type InferM = TechneM (State InferS)
 type Subst = Map.Map TVar Type
 
 -- ----------------------------------------------------------------------------
@@ -92,10 +83,10 @@ instance Typed Lit where
 initTypeEnv :: TypeEnv
 initTypeEnv = TypeEnv $ Map.fromList
     [ -- int functions:
-      ("internalSum",  S $ TInt :->> TInt :->> TInt  )
+      ("internalSum", S $ TInt :->> TInt :->> TInt  )
     , ("internalSub", S $ TInt :->> TInt :->> TInt  )
-    , ("internalMul",   S $ TInt :->> TInt :->> TInt  )
-    , ("internalDiv",   S $ TInt :->> TInt :->> TFloat)
+    , ("internalMul", S $ TInt :->> TInt :->> TInt  )
+    , ("internalDiv", S $ TInt :->> TInt :->> TFloat)
 
     {- FIXME:
     -- float functions
@@ -240,12 +231,12 @@ unify (l `TAp` r) (l' `TAp` r')  = do
 unify (TVar a) t = bind a t
 unify t (TVar a) = bind a t
 unify (TCon a) (TCon b) | a == b = return emptySubst
-unify t1 t2 = throwError $ UnificationFail t1 t2
+unify t1 t2 = throwError $ InferenceErr $ UnificationFail t1 t2
 
 bind ::  TVar -> Type -> InferM Subst
 bind a t | t == TVar a          = return emptySubst
-         | occursCheck a t      = throwError $ InfiniteType a t
-         | kindOf a /= kindOf t = throwError $ KindMismatch a t
+         | occursCheck a t      = throwError $ InferenceErr $ InfiniteType a t
+         | kindOf a /= kindOf t = throwError $ InferenceErr $ KindMismatch a t
          | otherwise            = return $ Map.singleton a t
 
 instantiate ::  Scheme -> InferM Type
@@ -284,7 +275,7 @@ normalize (Forall ts body) = Forall (fmap snd ord) (normtype body)
 lookupEnv :: TypeEnv -> Name -> InferM (Subst, Type)
 lookupEnv (TypeEnv env) x =
   case Map.lookup x env of
-    Nothing -> throwError $ UnboundVariable (tshow x)
+    Nothing -> throwError $ InferenceErr $ UnboundVariable (tshow x)
     Just s  -> do t <- instantiate s
                   return (emptySubst, t)
 
@@ -437,19 +428,19 @@ inferPattern env (UnpackPattern name typname (Tuple tuple)) = do
 
 runInferM m = evalState (runExceptT m) initInferS
 
-runInfer :: InferM (Subst, Type) -> Either InferE Scheme
+runInfer :: InferM (Subst, Type) -> TechneResult Scheme
 runInfer m = case runInferM m of
   Left err  -> Left err
   Right res -> Right $ closeOver res
 
-inferExpr :: TypeEnv -> Expr -> Either InferE Scheme
+inferExpr :: TypeEnv -> Expr -> TechneResult Scheme
 inferExpr env = runInfer . infer env
 
-inferModule :: TypeEnv -> Module -> Either InferE TypeEnv
+inferModule :: TypeEnv -> Module -> TechneResult TypeEnv
 inferModule env (Module imports decls) =
     foldr1 (liftA2 unionTypeEnv) $ map (inferDecl env) decls
 
-inferDecl :: TypeEnv -> Decl -> Either InferE TypeEnv
+inferDecl :: TypeEnv -> Decl -> TechneResult TypeEnv
 inferDecl env (FnDecl fn@(Fn (Just name) _ _ _)) =
     (\scheme -> extendTypeEnv env (name,scheme)) <$> inferExpr env (FnExpr fn)
 
@@ -459,7 +450,7 @@ inferDecl env (DataDecl dat@(Dat name vars datapairs)) =
     Right res -> Right $ env `extendTypeEnvAll` res
     where constructorTypes = concat <$> mapM (inferDataCons env name vars) datapairs
 
-inferDecl _ decl = Left $ NotAnExpression decl
+inferDecl _ decl = Left $ InferenceErr $ NotAnExpression decl
 
 -- FIXME: this only produces rank-1 kind. To produce rank-n kinds
 -- I probably need to look inside the data definition and infer from there.

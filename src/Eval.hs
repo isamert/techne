@@ -1,6 +1,7 @@
 module Eval where
 
 import TechnePrelude
+import Err
 import Syntax
 import Core
 
@@ -12,8 +13,7 @@ import qualified Data.Map as Map
 -- Data definitions
 -- ----------------------------------------------------------------------------
 
-data InterpreterE = RuntimeError deriving (Show, Eq)
-type InterpreterM a = ExceptT InterpreterE Identity a
+type InterpreterM a = TechneM Identity a
 
 pattern CInt x = CVal (CLit (IntLit x))
 pattern CFlt x = CVal (CLit (FltLit x))
@@ -44,6 +44,7 @@ pDiv   [CInt x, CInt y] = CFlt (fromIntegral x / fromIntegral y)
 -- Eval
 -- ----------------------------------------------------------------------------
 
+--TODO: match
 eval :: Env -> CExpr -> InterpreterM CExpr
 eval env (CRef name) = do
     expr <- envLookup env name
@@ -69,12 +70,12 @@ eval env c@(Closure _) = return c -- This is here because eval usage in CRef cas
 -- Utils
 -- ----------------------------------------------------------------------------
 
-runEval :: Env -> CExpr -> Either InterpreterE CExpr
+runEval :: Env -> CExpr -> TechneResult CExpr
 runEval env expr = runIdentity . runExceptT $ eval env expr
 
 envLookup :: Env -> Name -> InterpreterM CExpr
 envLookup env name =
     case Map.lookup name env of
       Just x -> return x
-      Nothing -> throwError RuntimeError
+      Nothing -> throwError $ InterpreterErr RuntimeError
 

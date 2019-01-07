@@ -16,6 +16,7 @@ module Renamer
     ) where
 
 import TechnePrelude
+import Err
 import Syntax
 import Parser
 
@@ -34,8 +35,7 @@ data RenamerS
                , allowFail :: Bool
                } deriving (Show, Eq, Ord)
 
-newtype RenamerE = NotAssigned Text deriving (Show, Eq, Ord)
-type RenamerM a  = ExceptT RenamerE (State RenamerS) a
+type RenamerM a  = TechneM (State RenamerS) a
 
 -- FIXME: currEnv is stupid. Explicitly return a generated env.
 -- FIXME: name clashes between modules are not reported.
@@ -64,7 +64,7 @@ renameDecls decls env = do
     -- FIXME: ^^ Maybe check conflicts here before union (with other modules)
     mapM (`renameDecl` newenv) gdecls
         where renameDeclNames (FnDecl fn@Fn {fnName=(Just name)}) env  = do
-                gname <- insertCurrEnv name
+                gname <- newTopLvlName name
                 return $ FnDecl $ fn { fnName = Just gname }
               renameDeclNames decl env = return decl
 
@@ -74,6 +74,13 @@ renameDecls decls env = do
 
               -- FIXME: rename ImplDecl, ConceptDecl
               renameDecl x env = return x
+
+              newTopLvlName name@"main" = do
+                let gname = "PROGRAM_ENTRY"
+                s <- get
+                put s { currEnv = Map.insert name gname (currEnv s) }
+                return gname
+              newTopLvlName name = insertCurrEnv name
 
 
 -- ----------------------------------------------------------------------------
@@ -145,7 +152,7 @@ renameFreeVar name env =
               Nothing    -> do
                   fail <- gets allowFail
                   if fail
-                     then throwError (NotAssigned name)
+                     then throwError (RenamerErr $ NotAssigned name)
                      else genName
 
 renamePattern :: Pattern -> RenamerM Pattern
@@ -178,13 +185,13 @@ renameList f (List xs) = List <$> mapM f xs
 -- ----------------------------------------------------------------------------
 
 -- FIXME: change evalRenamer to runRenamer and runRenamer to evalRenamer xdxd
-evalRenamer' :: (a -> GenEnv -> RenamerM a) -> a -> GenEnv -> RenamerS -> (Either RenamerE a, RenamerS)
+evalRenamer' :: (a -> GenEnv -> RenamerM a) -> a -> GenEnv -> RenamerS -> (TechneResult a, RenamerS)
 evalRenamer' m a env s = runState (runExceptT $ m a env) s
 
-runRenamer :: Bool -> RenamerM a -> Either RenamerE a
+runRenamer :: Bool -> RenamerM a -> TechneResult a
 runRenamer fail m = evalState (runExceptT m) $ initRenamerS fail
 
-runRenamer' :: (a -> GenEnv -> RenamerM a) -> a -> Either RenamerE a
+runRenamer' :: (a -> GenEnv -> RenamerM a) -> a -> TechneResult a
 runRenamer' m a = evalState (runExceptT $ m a emptyGenEnv) $ initRenamerS True
 
 runRenamerWithoutErr :: (a -> GenEnv -> RenamerM a) -> a -> a
