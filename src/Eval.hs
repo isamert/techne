@@ -8,6 +8,7 @@ import Core
 import Control.Monad.Identity
 import Control.Monad.Except
 import qualified Data.Map as Map
+import qualified Data.Text.ICU as ICU
 
 -- ----------------------------------------------------------------------------
 -- Data definitions
@@ -44,12 +45,20 @@ pDiv   [CInt x, CInt y] = CFlt (fromIntegral x / fromIntegral y)
 -- Eval
 -- ----------------------------------------------------------------------------
 
---TODO: match
+envLookup :: Env -> Name -> InterpreterM CExpr
+envLookup env name =
+    case Map.lookup name env of
+      Just x -> return x
+      Nothing -> throwError $ InterpreterErr RuntimeError
+
 eval :: Env -> CExpr -> InterpreterM CExpr
 eval env (CRef name) = do
     expr <- envLookup env name
     eval env expr
-eval env val@(CVal _) = return val
+eval env val@(CVal (CLit _)) = return val
+eval env (CVal (CDat name exprs)) = do
+    evaled <- mapM (eval env) exprs
+    return $ CVal (CDat name evaled)
 eval env (CLam p body) = return . Closure $ UClosure p body env
 eval env (CApp f arg) = do
     closure <- eval env f
@@ -64,7 +73,29 @@ eval env (CApp f arg) = do
              then return $ (fromJust $ Map.lookup name primitiveEnv) argvs
              else return . Closure $ PClosure name i argvs
 eval env (CFix e) = eval env (CApp e (CFix e))
-eval env c@(Closure _) = return c -- This is here because eval usage in CRef case
+eval env c@(Closure _) = return c -- need this because eval usage in CRef case
+eval env (CMatch test cases) = do
+    etest <- eval env test
+    let ((_, nenv_), case_, expr) = head -- FIXME: RUNTIME ERR
+                             $ filter (\(c,_,_) -> fst c)
+                             $ map (\(c,e) -> (testCase etest c, c, e)) cases
+    let nenv = Map.fromList $ map (\(a,b) -> (fromJust a, b)) $ filter (isJust . fst) nenv_
+    eval nenv expr
+
+-- ----------------------------------------------------------------------------
+-- Helpers
+-- ----------------------------------------------------------------------------
+
+testCase :: CExpr -> CPattern -> (Bool, [(Maybe Name, CExpr)])
+testCase val@(CVal (CLit (StrLit str))) (CPRegex name rtxt) = (isJust $ ICU.find (ICU.regex [] rtxt) str, [(name, val)])
+testCase val@(CVal (CLit litl)) (CPLit name litr) = (litl == litr, [(name, val)])
+testCase val@(CVal (CDat _ vals)) (CPUnpack name _ ptrns) =
+    let results = zipWith testCase vals ptrns in
+    (all (== True) $ map fst results , (name, val) : concatMap snd results)
+testCase val (CPBind name) = (True, [(Just name, val)])
+testCase val (CPElse name) = (True, [(name, val)])
+testCase _ _ = (False, [])
+
 
 -- ----------------------------------------------------------------------------
 -- Utils
@@ -72,10 +103,4 @@ eval env c@(Closure _) = return c -- This is here because eval usage in CRef cas
 
 runEval :: Env -> CExpr -> TechneResult CExpr
 runEval env expr = runIdentity . runExceptT $ eval env expr
-
-envLookup :: Env -> Name -> InterpreterM CExpr
-envLookup env name =
-    case Map.lookup name env of
-      Just x -> return x
-      Nothing -> throwError $ InterpreterErr RuntimeError
 

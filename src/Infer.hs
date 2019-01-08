@@ -381,7 +381,7 @@ inferPattern _ (RestPattern name) =
   fresh Star >>= \tvar -> return ((name, tvar), [])
 
 inferPattern _ (RegexPattern name _) =
-  fresh Star >>= \tvar -> return ((name, T"string"), [])
+  fresh Star >>= \tvar -> return ((name, pList $ T"char"), [])
 
 inferPattern _ (LitPattern name lit) = do
     (s, t) <- infer emptyTypeEnv (LitExpr lit)
