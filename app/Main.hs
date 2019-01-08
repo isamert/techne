@@ -172,6 +172,7 @@ cmds = [ (["eval"], cmdEval)
        , (["dumpVanilla"], cmdDumpVanilla)
        , (["dumpDesugared"], cmdDumpDesugared)
        , (["dumpRenamed"], cmdDumpDesugared)
+       , (["dumpCore"], cmdDumpCore)
        , (["dumpType"], cmdType True)
        , (["type", "t"], cmdType False)
        ]
@@ -188,6 +189,18 @@ cmdDumpDesugared line = do
     case result of
       ReplExpr expr -> groomPut $ desugarExpr expr
       ReplDecl decl -> groomPut $ desugarDecl decl
+
+cmdDumpCore :: Text -> ReplM2 ()
+cmdDumpCore line = do
+    env <- lift $ gets env
+    (parsed, pstate') <- replParse line
+    desugared <- replDesugar parsed
+    (renamed, rstate', genenv') <- replRename desugared
+    (mscheme, typeenv') <- replInfer desugared
+    (mcexpr, env') <- replCore renamed
+    case mcexpr of
+      Just cexpr -> groomPut cexpr
+      Nothing -> outputStrLn ""
 
 
 cmdType :: Bool -> Text -> ReplM2 ()
