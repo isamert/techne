@@ -19,7 +19,7 @@ data InferErr
 type ParserErr      = ParseErrorBundle Text Void
 newtype RenamerErr  = NotAssigned Text deriving (Show, Eq, Ord)
 data CoreErr        = DesugaringError deriving (Show, Eq)
-data InterpreterErr = RuntimeError deriving (Show, Eq)
+data InterpreterErr = RuntimeError Text deriving (Show, Eq)
 
 data TechneErr
     = ParserErr ParserErr

@@ -145,7 +145,9 @@ renameExpr x _ = return x
 
 renameFreeVar :: Name -> GenEnv -> RenamerM GenName
 renameFreeVar name env =
-    if  tisUpperFirst name || tisPrefixOf "internal" name
+    if  tisUpperFirst name
+          || tisPrefixOf "internal" name
+          || tisInfixOf FieldAccessor name
        then return name
        else case Map.lookup name env of
               Just gname -> return gname

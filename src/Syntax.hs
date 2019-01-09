@@ -260,7 +260,7 @@ mkBool False = mksRef "False"
 -- Predefined patterns for easy access
 -- ----------------------------------------------------------------------------
 
-pattern FieldAccessor = "::"
+pattern FieldAccessor = "->"
 
 pattern EList   x                 = ListExpr  (List       x)
 pattern ETuple  x                 = TupleExpr (Tuple      x)

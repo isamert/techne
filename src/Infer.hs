@@ -23,7 +23,7 @@ import Syntax
 import Control.Monad.Except
 import Control.Monad.State
 import Data.Generics.Uniplate.Data
-import qualified Data.Map.Strict as Map
+import qualified Data.Map as Map
 import qualified Data.Set as Set
 
 --  Adaptation of: http://dev.stephendiehl.com/fun/006_hindley_milner.html
@@ -88,23 +88,11 @@ initTypeEnv = TypeEnv $ Map.fromList
     , ("internalMul", S $ TInt :->> TInt :->> TInt  )
     , ("internalDiv", S $ TInt :->> TInt :->> TFloat)
 
-    {- FIXME:
-    -- float functions
-    , ("+.", S $ TFloat :->> TFloat :->> TFloat)
-    , ("-.", S $ TFloat :->> TFloat :->> TFloat)
-    , ("*.", S $ TFloat :->> TFloat :->> TFloat)
-    , ("/.", S $ TFloat :->> TFloat :->> TFloat)
-    -}
-
-    -- number utility
-    , ("float2int", S $ TFloat :->> TInt  )
-    , ("int2float", S $ TInt   :->> TFloat)
-
      -- list functions
+    , ("internalArrPrep" , oneVarScheme $ TVarA :->> pList TVarA :->> pList TVarA)
     , ("internalArrJoin" , oneVarScheme $ pList TVarA :->> pList TVarA :->> pList TVarA)
 
-    -- generic functions
-    , ("==", oneVarScheme $ TVarA :->> TVarA :->> TBool)]
+    ]
 
     where oneVarScheme = Forall [TV "a" Star]
           twoVarScheme = Forall [TV "a" Star, TV "b" Star]
@@ -437,8 +425,12 @@ inferExpr :: TypeEnv -> Expr -> TechneResult Scheme
 inferExpr env = runInfer . infer env
 
 inferModule :: TypeEnv -> Module -> TechneResult TypeEnv
-inferModule env (Module imports decls) =
-    foldr1 (liftA2 unionTypeEnv) $ map (inferDecl env) decls
+inferModule env (Module imports []) = Right env
+inferModule env (Module imports (decl:decls)) =
+    case inferDecl env decl of
+      Right e -> let nenv = unionTypeEnv e env in
+                 inferModule nenv (Module imports decls)
+      Left y -> Left y
 
 inferDecl :: TypeEnv -> Decl -> TechneResult TypeEnv
 inferDecl env (FnDecl fn@(Fn (Just name) _ _ _)) =

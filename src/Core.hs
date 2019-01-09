@@ -42,7 +42,7 @@ data CExpr
     | CLam    Name CExpr
     | CApp    CExpr CExpr
     | CMatch  CExpr [(CPattern, CExpr)]
-    | CFix    CExpr
+    | CFix    Name CExpr
     | Closure Closure
     deriving (Show, Eq, Typeable, Data)
 
@@ -52,6 +52,12 @@ pattern CaseTrue        = CPUnpack Nothing "True"  []
 pattern CaseFalse       = CPUnpack Nothing "False" []
 pattern CaseCons x rest = CPUnpack Nothing "Cons"  [x, rest]
 pattern CaseNil         = CPUnpack Nothing "Nil"   []
+pattern CStr x          = CVal (CLit (StrLit x))
+pattern CChr x          = CVal (CLit (ChrLit x))
+pattern CInt x          = CVal (CLit (IntLit x))
+pattern CFlt x          = CVal (CLit (FltLit x))
+pattern CCons e rest    = CVal (CDat "Cons" [e, rest])
+pattern CNil            = CVal (CDat "Nil" [])
 
 -- ----------------------------------------------------------------------------
 -- Core
@@ -83,12 +89,13 @@ coreExpr (MatchExpr expr cases) = do
             cptrn <- ptrn2cptrn p
             cexpr <- coreExpr c
             return $ (cptrn, cexpr)
-coreExpr (FixExpr xs) = CFix <$> coreExpr xs
+coreExpr (FixExpr xs) = do
+    (CLam x e) <- coreExpr xs
+    return $ CFix x e
 coreExpr (EList xs) = list2clist xs
 coreExpr (ETuple xs) = do
     ctuple <- tuple2ctuple xs
     return $ foldl CApp (CRef $ tupleConstructorName xs) ctuple
-    where
 
 -- FIXME: ImplDecl's
 -- FIXME: imports
@@ -103,7 +110,17 @@ coreDecl (FnDecl fn@(Fn (Just name) prms body scope)) = do
     cscp <- mapM coreDecl scope
     return $ Map.union (Map.singleton name cfn)
               (foldl Map.union Map.empty cscp)
-coreDecl (DataDecl (Dat _ _ constrs)) = return $ Map.fromList $ map constr2fn constrs
+coreDecl (DataDecl (Dat name _ constrs)) = do
+    let constrfns = Map.fromList $ map constr2fn constrs
+        accessors = Map.fromList $ concatMap (mkFieldAccessors name) constrs
+    return $ Map.union constrfns accessors
+
+mkFieldAccessors :: Name -> (Name, [DataParam]) -> [(Name, CExpr)]
+mkFieldAccessors datname (name, prms) =
+    map fields (zip [0..] prms)
+    where fields (n, dprm) =
+            (datname ++ FieldAccessor ++ dataPrmName dprm
+            , CLam "X" (CApp (CApp (CRef "internalNth") (CInt n)) (CRef "X")))
 
 -- ----------------------------------------------------------------------------
 -- Helpers

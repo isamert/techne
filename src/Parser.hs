@@ -46,7 +46,8 @@ data ParserS =
             , stateParamCounter   :: Int
             } deriving (Show,  Eq)
 
-type ParserM a  = StateT ParserS (Parsec Void Text) a
+type TParser = Parsec Void Text
+type ParserM a  = StateT ParserS TParser a
 
 -- ----------------------------------------------------------------------------
 -- State related functions
@@ -79,14 +80,14 @@ updateFnDefs def = do
 testParser p = parseTest (runStateT p initParserS)
 tparse p = parse (runStateT p initParserS)
 
+parseModule :: TParser (Module, ParserS)
 parseModule = runStateT module_ initParserS
-parseFile p file = runParser p file <$> readFile file
+
+parseFile :: MonadIO f => TParser c -> String -> f (Either TechneErr c)
+parseFile p file = first ParserErr <$> (runParser p file <$> readFile file)
 
 parseReplWithState :: ParserS -> Text -> TechneResult (Repl, ParserS)
-parseReplWithState state line =
-    case parse (runStateT repl state) "<stdin>" line of
-      Right x -> Right x
-      Left y -> Left $ ParserErr y
+parseReplWithState state line = first ParserErr $ parse (runStateT repl state) "<stdin>" line
 
 parseExprWithState :: ParserS -> Text -> TechneResult (Expr, ParserS)
 parseExprWithState state line =
@@ -180,6 +181,7 @@ infixChars = "-=_?+*/&^%$!@<>:|"
 rword :: Text -> ParserM ()
 rword w = (lexeme . try) (string w >> notFollowedBy alphaNumChar)
 
+bareColon = try $ colon >> notFollowedBy (oneOf infixChars)
 wFn = void (rword "fn") <|> void (symbol "λ")
 wArrow = symbol "->" <|> symbol "→"
 
@@ -373,7 +375,7 @@ params :: [Constraint] -> ParserM [Param]
 params cnsts = param cnsts `sepBy` comma
 
 optionalType :: [Constraint] -> ParserM (Maybe Scheme)
-optionalType cnsts = optional (colon >> typeWithConstraints cnsts)
+optionalType cnsts = optional (bareColon >> typeWithConstraints cnsts)
 
 -- Parse a type parameter
 typeconstraint :: ParserM Constraint
@@ -614,7 +616,7 @@ fnTop = do
 
 fnDefWithConstraints :: [Constraint] -> ParserM FnDef
 fnDefWithConstraints constraints = do
-    fnname <- try $ identifier <* (colon >> notFollowedBy (oneOf infixChars))
+    fnname <- try $ identifier <* bareColon
     lclCnsts <- constraintsWithArrow
     let cnsts = constraints ++ lclCnsts
     types <- typeWithConstraints cnsts
