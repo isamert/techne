@@ -4,6 +4,7 @@ module Pretty
 
 import TechnePrelude hiding ((<>))
 import Syntax
+import Core
 
 import Data.Text.Prettyprint.Doc
 import Data.Text.Prettyprint.Doc.Render.String
@@ -11,6 +12,10 @@ import Data.Text.Prettyprint.Doc.Render.String
 prettyTV tv = pretty $ "~" ++ tv
 prettyType = align . sep . zipWith (<+>) ("::" : repeat "->")
 prettyDecl n tys = pretty n <+> prettyType tys
+prettyLit (StrLit str) = "\"" <> pretty str <> "\""
+prettyLit (ChrLit chr) = pretty chr
+prettyLit (IntLit i) = pretty i
+prettyLit (FltLit i) = pretty i
 
 prettyTuple    xs      = align (encloseSep lparen rparen comma (map pretty xs))
 prettyDataType name xs = pretty name <> align (encloseSep langle rangle comma (map pretty xs))
@@ -57,3 +62,7 @@ instance Pretty Scheme where
 
 instance Pretty Expr where
     pretty e = undefined
+
+instance Pretty CExpr where
+    pretty (CVal (CDat name es)) = pretty name <> prettyTuple es
+    pretty (CVal (CLit lit)) = prettyLit lit

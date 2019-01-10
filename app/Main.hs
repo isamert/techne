@@ -282,7 +282,7 @@ cmdEval line = do
       Just expr -> do
           resultio <- liftIO $ runEval env expr
           result <- liftE $ resultio
-          groomPut result
+          groomPut $ pretty result
       Nothing   -> return ()
 
     setParserState pstate'
