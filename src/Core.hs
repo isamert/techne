@@ -58,6 +58,11 @@ pattern CInt x          = CVal (CLit (IntLit x))
 pattern CFlt x          = CVal (CLit (FltLit x))
 pattern CCons e rest    = CVal (CDat "Cons" [e, rest])
 pattern CNil            = CVal (CDat "Nil" [])
+pattern CTrue           = CVal (CDat "True" [])
+pattern CFalse          = CVal (CDat "False" [])
+
+cBool True  = CTrue
+cBool False = CFalse
 
 -- ----------------------------------------------------------------------------
 -- Core
@@ -114,6 +119,7 @@ coreDecl (DataDecl (Dat name _ constrs)) = do
     let constrfns = Map.fromList $ map constr2fn constrs
         accessors = Map.fromList $ concatMap (mkFieldAccessors name) constrs
     return $ Map.union constrfns accessors
+coreDecl x = return Map.empty
 
 mkFieldAccessors :: Name -> (Name, [DataParam]) -> [(Name, CExpr)]
 mkFieldAccessors datname (name, prms) =
@@ -136,7 +142,7 @@ param2name (Param (BindPattern name _)) = return name
 param2name (Param ptrn) = throwError $ CoreErr DesugaringError
 
 cases2match :: [(Expr, Expr)] -> CoreM CExpr
-cases2match [] = return $ CApp (CRef "error") $ CVal . CLit $ StrLit "unhandled case in when expr"
+cases2match [] = return $ CApp (CRef "internalErr") $ CVal . CLit $ StrLit "unhandled case in when expr"
 cases2match ((el, er):cs) = do
     cel <- coreExpr el
     cer <- coreExpr er

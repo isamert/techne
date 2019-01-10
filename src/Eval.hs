@@ -14,8 +14,8 @@ import qualified Data.Text.ICU as ICU
 -- Data definitions
 -- ----------------------------------------------------------------------------
 
-type InterpreterM a = TechneM Identity a
-type PEnv = Map.Map Text ([CExpr] -> CExpr)
+type InterpreterM a = TechneM IO a
+type PEnv = Map.Map Text ([CExpr] -> IO CExpr)
 
 -- ----------------------------------------------------------------------------
 -- Env
@@ -27,30 +27,34 @@ primitiveEnv = Map.fromList $ map snd createEnv
 defaultEnv :: Env
 defaultEnv = Map.fromList $ map fst createEnv
 
-createEnv :: [((Text, CExpr), (Text, [CExpr] -> CExpr))]
+createEnv :: [((Text, CExpr), (Text, [CExpr] -> IO CExpr))]
 createEnv = [envElem "internalSum" 2 pPlus
             ,envElem "internalSub" 2 pMinus
             ,envElem "internalMul" 2 pMul
             ,envElem "internalDiv" 2 pDiv
             ,envElem "internalArrJoin" 2 pArrJoin
             ,envElem "internalArrPrep" 2 pArrPrep
+            ,envElem "internalEq" 2 pEq
+            ,envElem "internalErr" 1 pErr
             ,envElem "internalNth" 2 pNth]
 
 envElem :: Text -> Int -> b -> ((Text, CExpr), (Text, b))
 envElem name n f = ((name, Closure (PClosure name n []))
                    ,(name, f))
 
-pPlus  [CInt x, CInt y] = CInt (x + y)
-pMinus [CInt x, CInt y] = CInt (x - y)
-pMul   [CInt x, CInt y] = CInt (x * y)
-pDiv   [CInt x, CInt y] = CFlt (fromIntegral x / fromIntegral y)
-pArrJoin [CCons x CNil, b] = CCons x b
-pArrJoin [CCons x y, b] = CCons x (pArrJoin [y, b])
-pArrJoin [CStr x, CStr y] = CStr (x ++ y)
-pArrPrep [x, y@(CCons _ _)] = CCons x y
-pArrPrep [x, CNil] = CCons x CNil
-pArrPrep [CChr c, CStr s] = CStr (tcons c s)
-pNth [CInt n, CVal (CDat _ elems)] = elems !! (fromIntegral n)
+pPlus  [CInt x, CInt y] = return $ CInt (x + y)
+pMinus [CInt x, CInt y] = return $ CInt (x - y)
+pMul   [CInt x, CInt y] = return $ CInt (x * y)
+pDiv   [CInt x, CInt y] = return $ CFlt (fromIntegral x / fromIntegral y)
+pArrJoin [CCons x CNil, b] = return $ CCons x b
+pArrJoin [CCons x y, b] = do { rest <- pArrJoin [y, b]; return $ CCons x (rest); }
+pArrJoin [CStr x, CStr y] = return $ CStr (x ++ y)
+pArrPrep [x, y@(CCons _ _)] = return $ CCons x y
+pArrPrep [x, CNil] = return $ CCons x CNil
+pArrPrep [CChr c, CStr s] = return $ CStr (tcons c s)
+pEq [CVal x, CVal y] = return $ cBool (x == y)
+pNth [CInt n, CVal (CDat _ elems)] = return $ elems !! (fromIntegral n)
+pErr [x] = return $ CStr $ tshow x
 
 -- ----------------------------------------------------------------------------
 -- Eval
@@ -81,7 +85,9 @@ eval env (CApp f arg) = do
       Closure (PClosure name i args) -> do
           let argvs = args ++ [argv]
           if length argvs == i
-             then return $ (fromJust $ Map.lookup name primitiveEnv) argvs
+             then do
+                    result <- liftIO $ (fromJust $ Map.lookup name primitiveEnv) argvs
+                    return result
              else return . Closure $ PClosure name i argvs
 eval env c@(Closure _) = return c -- need this because eval usage in CRef case
 eval env (CMatch test cases) = do
@@ -102,7 +108,8 @@ eval env (CFix name e) =
 testCase :: CExpr -> CPattern -> (Bool, [(Maybe Name, CExpr)])
 testCase val@(CVal (CLit (StrLit str))) (CPRegex name rtxt) = (isJust $ ICU.find (ICU.regex [] rtxt) str, [(name, val)])
 testCase val@(CVal (CLit litl)) (CPLit name litr) = (litl == litr, [(name, val)])
-testCase val@(CVal (CDat _ vals)) (CPUnpack name _ ptrns)
+testCase val@(CVal (CDat datname vals)) (CPUnpack name uname ptrns)
+  | datname /= uname = (False, [])
   | length vals == length ptrns =
       let results = zipWith testCase vals ptrns in
       (all (== True) $ map fst results , (name, val) : concatMap snd results)
@@ -116,6 +123,6 @@ testCase _ _ = (False, [])
 -- Utils
 -- ----------------------------------------------------------------------------
 
-runEval :: Env -> CExpr -> TechneResult CExpr
-runEval env expr = runIdentity . runExceptT $ eval env expr
+runEval :: Env -> CExpr -> IO (TechneResult CExpr)
+runEval env expr = runExceptT $ eval env expr
 

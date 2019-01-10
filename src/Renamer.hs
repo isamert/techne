@@ -52,17 +52,20 @@ type RenamerM a  = TechneM (State RenamerS) a
 -- Toplvl renamers
 -- ----------------------------------------------------------------------------
 
-renameModule :: Module -> GenEnv -> RenamerM Module
-renameModule (Module impts decls) env = Module impts <$> renameDecls decls env
+renameModule :: Module -> GenEnv -> RenamerM (Module, GenEnv)
+renameModule (Module impts decls) env = do
+    (gdecls, env) <- renameDecls decls env
+    return (Module impts gdecls, env)
 
 -- FIXME: main function (rename it to PROGRAM_ENTRY or smth like that)
-renameDecls :: [Decl] -> GenEnv -> RenamerM [Decl]
+renameDecls :: [Decl] -> GenEnv -> RenamerM ([Decl], GenEnv)
 renameDecls decls env = do
     gdecls <- resetCurrEnv >> mapM (`renameDeclNames` env) decls
     currenv <- gets currEnv
     let newenv = Map.union currenv env
     -- FIXME: ^^ Maybe check conflicts here before union (with other modules)
-    mapM (`renameDecl` newenv) gdecls
+    d <- mapM (`renameDecl` newenv) gdecls
+    return (d, newenv)
         where renameDeclNames (FnDecl fn@Fn {fnName=(Just name)}) env  = do
                 gname <- newTopLvlName name
                 return $ FnDecl $ fn { fnName = Just gname }
@@ -82,7 +85,6 @@ renameDecls decls env = do
                 return gname
               newTopLvlName name = insertCurrEnv name
 
-
 -- ----------------------------------------------------------------------------
 -- renameExpr
 -- ----------------------------------------------------------------------------
@@ -96,10 +98,11 @@ renameExpr (ListExpr list) env = ListExpr <$> renameList (`renameExpr` env) list
 renameExpr (TupleExpr tuple) env = TupleExpr <$> renameTuple (`renameExpr` env) tuple
 
 renameExpr fn@(EFn name prms_ expr_ scope) env = do
+    (scop, nenv) <- renameDecls scope env
+    let newenv = Map.union nenv env
     prms <- resetCurrEnv >> renameParams
     currenv <- gets currEnv
-    expr <- renameExpr expr_ (Map.union currenv env) -- union is left-biased
-    scop <- renameDecls scope env
+    expr <- renameExpr expr_ (Map.union currenv newenv) -- union is left-biased
     return $ EFn name prms expr scop
     where renameParams = forM prms_ $ \case
             (Param ptrn) -> Param <$> renamePattern ptrn
@@ -187,8 +190,8 @@ renameList f (List xs) = List <$> mapM f xs
 -- ----------------------------------------------------------------------------
 
 -- FIXME: change evalRenamer to runRenamer and runRenamer to evalRenamer xdxd
-evalRenamer' :: (a -> GenEnv -> RenamerM a) -> a -> GenEnv -> RenamerS -> (TechneResult a, RenamerS)
-evalRenamer' m a env s = runState (runExceptT $ m a env) s
+evalRenamer' :: (GenEnv -> RenamerM a) -> GenEnv -> RenamerS -> (TechneResult a, RenamerS)
+evalRenamer' m env s = runState (runExceptT $ m env) s
 
 runRenamer :: Bool -> RenamerM a -> TechneResult a
 runRenamer fail m = evalState (runExceptT m) $ initRenamerS fail
@@ -196,9 +199,9 @@ runRenamer fail m = evalState (runExceptT m) $ initRenamerS fail
 runRenamer' :: (a -> GenEnv -> RenamerM a) -> a -> TechneResult a
 runRenamer' m a = evalState (runExceptT $ m a emptyGenEnv) $ initRenamerS True
 
-runRenamerWithoutErr :: (a -> GenEnv -> RenamerM a) -> a -> a
-runRenamerWithoutErr m a = fromRight' $
-    evalState (runExceptT $ m a emptyGenEnv) $ initRenamerS False
+runRenamerWithoutErr :: (GenEnv -> RenamerM a) -> a
+runRenamerWithoutErr m = fromRight' $
+    evalState (runExceptT $ m emptyGenEnv) $ initRenamerS False
 
 initRenamerS :: Bool -> RenamerS
 initRenamerS fail = RenamerS { counter = 0, currEnv = Map.empty, allowFail = fail }

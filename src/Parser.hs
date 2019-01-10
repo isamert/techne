@@ -168,13 +168,14 @@ signedInteger = L.signed spaceConsumer integer
 -- TODO: needs to be updated
 rwords :: [Text]
 rwords = ["if", "then", "else", "elif", "skip", "return", "and", "is",
-           "let", "or", "while", "when", "use", "from", "data", "fn"]
+           "let", "or", "while", "when", "use", "from", "data", "fn",
+           "concept", "impl", "impls"]
 
 rsymbols :: [Text]
 rsymbols = ["->", "=", FieldAccessor]
 
 infixChars :: String
-infixChars = "-=_?+*/&^%$!@<>:|"
+infixChars = "-=_?+*/&^%$!@<>:|≤≥÷¬≠"
 
 -- | Parses given reserved word.
 -- rword "if"
@@ -544,7 +545,7 @@ if_ = do
         return (pred, true)
     els <- rword "else" >> expr
     rword "end"
-    return $ WhenExpr ((test, true) : pairs)
+    return $ WhenExpr $  ((test, true) : pairs) ++ [(mkBool True, els)]
 
 -- ----------------------------------------------------------------------------
 -- Top lvl stuff
@@ -599,10 +600,20 @@ impl = do
 fnTop :: ParserM Fn
 fnTop = do
     rword "let" <|> return ()
-    fn <- try fnInfix <|> fn
+    fn <- fnPrefix <|> try fnInfix <|> try fnPostfix <|> fn
     liftM2 fn expr where_
     where where_ = (rword "where" >> decl `sepBy` comma) <|> return []
-          fnInfix = do -- TODO: check definition?
+          fnPrefix = do -- TODO: check definition?
+            name <- callOpIdent
+            prm <- param []
+            equal
+            return $ Fn (Just name) [prm]
+          fnPostfix = do
+            prm <- param []
+            name <- callOpIdent
+            equal
+            return $ Fn (Just name) [prm]
+          fnInfix = do
             prm1 <- param []
             name <- callOpIdent
             prm2 <- param []

@@ -133,7 +133,7 @@ desugarRecursive decl@(FnDecl (Fn (Just name) prms body whr)) =
        else decl
 
 isRecursive :: Decl -> Bool
-isRecursive fndecl = isRecursive' . head $ runRenamerWithoutErr renameDecls [fndecl]
+isRecursive fndecl = isRecursive' . head $ fst (runRenamerWithoutErr $ renameDecls [fndecl])
     where isRecursive' (FnDecl (Fn (Just name) prms body scope)) =
             name `elem` [name | (RefExpr (Ref name)) <- universe body]
           isRecursive' _ = False

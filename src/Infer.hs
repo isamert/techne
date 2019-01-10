@@ -92,6 +92,8 @@ initTypeEnv = TypeEnv $ Map.fromList
     , ("internalArrPrep" , oneVarScheme $ TVarA :->> pList TVarA :->> pList TVarA)
     , ("internalArrJoin" , oneVarScheme $ pList TVarA :->> pList TVarA :->> pList TVarA)
 
+    , ("internalEq", oneVarScheme $ TVarA :->> TVarA :->> TBool)
+
     ]
 
     where oneVarScheme = Forall [TV "a" Star]
@@ -345,10 +347,15 @@ infer env (MatchExpr test cases) = do
                    , apply (s4 `composeSubst` s3) t2)
 
 infer env (EFn name prms body scope) = do
+    let scopres = map (inferDecl env) scope
+    scopenv <- if length (lefts scopres) > 0
+                 then throwError NotATuple  -- FIXME: give a real err
+                 else return $ foldr unionTypeEnv emptyTypeEnv $ rights scopres
+
     inferedptrns <- mapM (inferPattern env . paramPtrn) prms
     let allinferedtyps = concatMap (uncurry (:)) inferedptrns
         env' = env `extendTypeEnvAll` filterNamedAndGeneralize allinferedtyps
-    (s1, t1) <- infer env' body
+    (s1, t1) <- infer (unionTypeEnv env' scopenv) body
     let nametyppair = map fst inferedptrns
         paramtyps   = apply s1 (map snd nametyppair)
     let returntype  = foldr (:->>) t1 paramtyps
@@ -442,7 +449,7 @@ inferDecl env (DataDecl dat@(Dat name vars datapairs)) =
     Right res -> Right $ env `extendTypeEnvAll` res
     where constructorTypes = concat <$> mapM (inferDataCons env name vars) datapairs
 
-inferDecl _ decl = Left $ InferenceErr $ NotAnExpression decl
+inferDecl env decl = Right env
 
 -- FIXME: this only produces rank-1 kind. To produce rank-n kinds
 -- I probably need to look inside the data definition and infer from there.

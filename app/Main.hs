@@ -228,8 +228,8 @@ cmdLoadFile line = do
     result <- parseFile parseModule (tunpack line)
     (ast, pstate') <- liftE result
     let desugared = desugarModule ast
-    let (renameresult, rstate') = evalRenamer' renameModule desugared emptyGenEnv (initRenamerS True)
-    renamed <- liftE renameresult
+    let (renameresult, rstate') = evalRenamer' (renameModule desugared) emptyGenEnv (initRenamerS True)
+    (renamed, genenv') <- liftE renameresult
     typeenv' <- liftE $ inferModule initTypeEnv renamed
     env' <- liftE $ runCore $ coreModule renamed
 
@@ -237,7 +237,7 @@ cmdLoadFile line = do
     setRenamerState rstate'
     let (Module _ decls) = ast
         (Module _ rdecls) = renamed
-    setGenEnv $ Map.fromList (map (bimap declName declName) $ zip decls rdecls) -- FIXME: zip
+    setGenEnv genenv'
     setTypeEnv typeenv'
     env <- lift $ gets env
     setEnv (Map.union env' env)
@@ -280,7 +280,8 @@ cmdEval line = do
     (mcexpr, env') <- replCore renamed
     case mcexpr of
       Just expr -> do
-          result <- liftE $ runEval env expr
+          resultio <- liftIO $ runEval env expr
+          result <- liftE $ resultio
           groomPut result
       Nothing   -> return ()
 
@@ -323,13 +324,13 @@ replRename r = do
     case r of
       ReplExpr ast -> do
           let desugaredExprAst = desugarExpr ast
-              (r, rstate') = evalRenamer' renameExpr desugaredExprAst genenv renamers
+              (r, rstate') = evalRenamer' (renameExpr desugaredExprAst) genenv renamers
           renamedast <- liftE r
           return (ReplExpr renamedast, rstate', genenv)
       ReplDecl ast -> do
           let desugaredDeclAst = desugarDecl ast
-              (r, rstate') = evalRenamer' renameDecls [desugaredDeclAst] genenv renamers
-          [renamedast] <- liftE r
+              (r, rstate') = evalRenamer' (renameDecls [desugaredDeclAst]) genenv renamers
+          ([renamedast], _) <- liftE r
           return (ReplDecl renamedast
                  , rstate'
                  , Map.insert (declName ast) (declName renamedast) genenv)
