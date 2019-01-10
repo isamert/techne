@@ -35,7 +35,13 @@ createEnv = [envElem "internalSum" 2 pPlus
             ,envElem "internalArrJoin" 2 pArrJoin
             ,envElem "internalArrPrep" 2 pArrPrep
             ,envElem "internalEq" 2 pEq
+            ,envElem "internalCmp" 3 pCmp
             ,envElem "internalErr" 1 pErr
+            ,envElem "internalNth" 2 pNth
+            ,envElem "internalReadStd" 1 pReadStd
+            ,envElem "internalReadFile" 1 pReadFile
+            ,envElem "internalPrint" 1 pPrintStd
+            ,envElem "internalWriteFile" 2 pWriteFile
             ,envElem "internalNth" 2 pNth]
 
 envElem :: Text -> Int -> b -> ((Text, CExpr), (Text, b))
@@ -52,9 +58,18 @@ pArrJoin [CStr x, CStr y] = return $ CStr (x ++ y)
 pArrPrep [x, y@(CCons _ _)] = return $ CCons x y
 pArrPrep [x, CNil] = return $ CCons x CNil
 pArrPrep [CChr c, CStr s] = return $ CStr (tcons c s)
-pEq [CVal x, CVal y] = return $ cBool (x == y)
 pNth [CInt n, CVal (CDat _ elems)] = return $ elems !! (fromIntegral n)
 pErr [x] = return $ CStr $ tshow x
+pEq [CVal x, CVal y] = return $ cBool (x == y)
+pCmp [CChr '=', CVal x, CVal y] = return $ cBool (x == y)
+pCmp [CChr '>', CVal x, CVal y] = return $ cBool (x > y)
+pCmp [CChr '<', CVal x, CVal y] = return $ cBool (x < y)
+pCmp [CChr '≥', CVal x, CVal y] = return $ cBool (x >= y)
+pCmp [CChr '≤', CVal x, CVal y] = return $ cBool (x <= y)
+pReadStd [CStr prompt] = putStr prompt >> (CStr <$> getLine)
+pReadFile [CStr path] = CStr <$> readFile (tunpack path)
+pPrintStd [CStr str] = return CUnit <* liftIO (putStr str)
+pWriteFile [CStr path, CStr txt] = (writeFile (tunpack path) txt) *> return CUnit
 
 -- ----------------------------------------------------------------------------
 -- Eval

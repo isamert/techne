@@ -123,22 +123,22 @@ symbol = L.symbol spaceConsumer
 --
 -- Literals
 --
-newLine   = symbol "\n"
-semicolon = symbol ";"
-comma     = symbol ","
-colon     = symbol ":"
-dot       = symbol "."
-bar       = symbol "|"
-lparen    = symbol "("
-rparen    = symbol ")"
-lbrace    = symbol "{"
-rbrace    = symbol "}"
-langle    = symbol "<"
-rangle    = symbol ">"
-lbracket  = symbol "["
-rbracket  = symbol "]"
-equal     = symbol "="
-tilde     = symbol "~"
+newLine    = symbol "\n"
+semicolon  = symbol ";"
+comma      = symbol ","
+colon      = symbol ":"
+dot        = symbol "."
+bar        = symbol "|"
+lparen     = symbol "("
+rparen     = symbol ")"
+lbrace     = symbol "{"
+rbrace     = symbol "}"
+langle     = symbol "<"
+rangle     = symbol ">"
+lbracket   = symbol "["
+rbracket   = symbol "]"
+tilde      = symbol "~"
+equal      = symbol "="
 
 parens    = between lparen rparen
 braces    = between lbrace rbrace
@@ -188,7 +188,7 @@ wArrow = symbol "->" <|> symbol "→"
 
 -- FIXME: needs better definition
 identifier :: ParserM Text
-identifier = lexeme $ try (tpack <$> some alphaNumChar >>= check)
+identifier = lexeme $ try (tpack <$> some (alphaNumChar <|> char '_') >>= check)
     where check w
             | w `elem` rwords || w `elem` rsymbols = fail $ show w ++ " is a keyword and cannot be an identifier."
             | otherwise = return w

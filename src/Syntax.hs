@@ -168,7 +168,7 @@ data Lit
     | IntLit  Integer
     | FltLit  Double
     | FracLit Rational
-    deriving (Show, Eq, Typeable, Data)
+    deriving (Show, Eq, Ord, Typeable, Data)
 
 newtype Tuple a
    = Tuple { tupleElems :: [TupleElem a] }
@@ -281,6 +281,7 @@ pattern TVarA = TVar (TV "a" Star)
 pattern TVarB = TVar (TV "b" Star)
 pattern TVarC = TVar (TV "c" Star)
 
+pattern TUnit  = T "unit"
 pattern TBool  = T "bool"
 pattern TInt   = T "int"
 pattern TFloat = T "float"

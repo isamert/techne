@@ -92,12 +92,20 @@ initTypeEnv = TypeEnv $ Map.fromList
     , ("internalArrPrep" , oneVarScheme $ TVarA :->> pList TVarA :->> pList TVarA)
     , ("internalArrJoin" , oneVarScheme $ pList TVarA :->> pList TVarA :->> pList TVarA)
 
+    -- generic functions
     , ("internalEq", oneVarScheme $ TVarA :->> TVarA :->> TBool)
+    , ("internalCmp", oneVarScheme $ TChar :->> TVarA :->> TVarA :->> TBool)
 
+    -- IO
+    , ("internalReadStd", S $ str :->> str)
+    , ("internalReadFile", S $ str :->> str)
+    , ("internalPrint", S $ str :->> TUnit)
+    , ("internalWriteFile", S $ str :->> str :->> TUnit)
     ]
 
     where oneVarScheme = Forall [TV "a" Star]
           twoVarScheme = Forall [TV "a" Star, TV "b" Star]
+          str = pList TChar
 
 emptyTypeEnv :: TypeEnv
 emptyTypeEnv = TypeEnv Map.empty

@@ -21,7 +21,7 @@ type CoreM a = TechneM Identity a
 data CVal
     = CDat Name [CExpr]
     | CLit Lit
-    deriving (Show, Eq, Typeable, Data)
+    deriving (Show, Eq, Ord, Typeable, Data)
 
 data CPattern
    = CPBind   Name
@@ -29,12 +29,12 @@ data CPattern
    | CPLit    (Maybe Name) Lit
    | CPRegex  (Maybe Name) Text
    | CPUnpack (Maybe Name) Name [CPattern]
-    deriving (Show, Eq, Typeable, Data)
+    deriving (Show, Eq, Ord, Typeable, Data)
 
 data Closure
     = UClosure Name CExpr Env
     | PClosure Name Int [CExpr]
-    deriving (Show, Eq, Typeable, Data)
+    deriving (Show, Eq, Ord, Typeable, Data)
 
 data CExpr
     = CRef    Name
@@ -44,7 +44,7 @@ data CExpr
     | CMatch  CExpr [(CPattern, CExpr)]
     | CFix    Name CExpr
     | Closure Closure
-    deriving (Show, Eq, Typeable, Data)
+    deriving (Show, Eq, Ord, Typeable, Data)
 
 type Env = Map.Map Text CExpr
 
@@ -60,6 +60,7 @@ pattern CCons e rest    = CVal (CDat "Cons" [e, rest])
 pattern CNil            = CVal (CDat "Nil" [])
 pattern CTrue           = CVal (CDat "True" [])
 pattern CFalse          = CVal (CDat "False" [])
+pattern CUnit          = CVal (CDat "Unit" [])
 
 cBool True  = CTrue
 cBool False = CFalse
