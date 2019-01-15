@@ -177,6 +177,10 @@ stack exec techne-exe -- main.techne # Running a techne file
 stack exec techne-exe -- -i          # REPL
 ```
 
+---
+
 <a name="fn1">1</a>: The name refers to [this](https://plato.stanford.edu/entries/episteme-techne/) [↩](#a1)
+
 <a name="fn2">2</a>: Typeclasses not yet fully implemented. [↩](#a2)
+
 <a name="fn3">3</a>: When type classes are implemented, they will be more powerful. [↩](#a3)
