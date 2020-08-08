@@ -12,14 +12,14 @@ The syntax is a mix of ML-style and C-style languages. Here is the definition of
 
 ```
 map [], _ = []
-[x, xs@...], f = f(x) :: map(xs, f)
+map [x, xs@...], f = f(x) :: map(xs, f)
 ```
 
 This function can also be written as:
 
 ```
 map [], _ = []
-[x, xs@...], f = x.f() :: xs.map(f)
+map [x, xs@...], f = x.f() :: xs.map(f)
 ```
 
 As you can see functions can be called upon objects even though they don't belong to them. Observe that all of these three implementations does the same thing and the first two are desugared into the last one:
